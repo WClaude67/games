@@ -426,7 +426,7 @@ function placeBins(cats,factory){const n=cats.length,sp=W/(n+1),bins=[];
 function genColorLevel(d){
   const nc=Math.min(2+Math.floor(d/2.5),COLOR_KEYS.length),nb=Math.min(3+d,14);
   const colors=shuffle([...COLOR_KEYS]).slice(0,nc);
-  const pos=scatter(nb,[60,W-60],[75,H*0.5-50]);
+  const pos=scatter(nb,[60,W-60],[H*0.5+15,H-175]);
   const bags=pos.map((p,i)=>{const ck=colors[i%nc];const b=new Bag(p[0],p[1],ck,'',ck,rand(26,40));b.labelType='color';return b;});
   const bins=placeBins(colors,(x,y,cat)=>{const b=new Bin(x,y,cat,COLORS[cat].name,cat);return b;});
   return{bags,bins,hint:'Match bags to bins by COLOR'};}
@@ -435,7 +435,7 @@ function genColorLevel(d){
 function genLetterLevel(d){
   const nl=Math.min(2+Math.floor(d/2),8),nb=Math.min(3+d,14);
   const letters=shuffle(LETTERS.split('')).slice(0,nl),colors=shuffle([...COLOR_KEYS]);
-  const pos=scatter(nb,[60,W-60],[75,H*0.5-50]);
+  const pos=scatter(nb,[60,W-60],[H*0.5+15,H-175]);
   const bags=pos.map((p,i)=>{const li=i%nl;return new Bag(p[0],p[1],letters[li],letters[li],colors[li%colors.length],rand(28,40));});
   const bins=placeBins(letters,(x,y,cat,i)=>new Bin(x,y,cat,cat.toLowerCase(),colors[i%colors.length]));
   return{bags,bins,hint:'Match UPPERCASE to lowercase'};}
@@ -444,7 +444,7 @@ function genLetterLevel(d){
 function genSizeLevel(d){
   const types=d<4?['Small','Big']:['Small','Med','Big'];
   const radii={'Small':22,'Med':32,'Big':42};
-  const nb=Math.min(4+d,14),pos=scatter(nb,[60,W-60],[75,H*0.5-50],55);
+  const nb=Math.min(4+d,14),pos=scatter(nb,[60,W-60],[H*0.5+15,H-175],55);
   const bc=shuffle([...COLOR_KEYS]);
   const bags=pos.map((p,i)=>{const st=types[i%types.length];const b=new Bag(p[0],p[1],st,'',bc[i%bc.length],radii[st]);b.labelType='color';return b;});
   const binC=['blue','green','red'];
@@ -455,7 +455,7 @@ function genSizeLevel(d){
 function genShapeLevel(d){
   const ns=Math.min(2+Math.floor(d/2),SHAPES.length),nb=Math.min(3+d,14);
   const shapes=shuffle([...SHAPES]).slice(0,ns),colors=shuffle([...COLOR_KEYS]);
-  const pos=scatter(nb,[60,W-60],[75,H*0.5-50]);
+  const pos=scatter(nb,[60,W-60],[H*0.5+15,H-175]);
   const bags=pos.map((p,i)=>{const si=i%ns;const b=new Bag(p[0],p[1],shapes[si],'',colors[i%colors.length],rand(28,40));b.labelType='shape';b.shapeType=shapes[si];return b;});
   const bins=placeBins(shapes,(x,y,cat,i)=>{const b=new Bin(x,y,cat,'',colors[i%colors.length]);b.labelType='shape';b.shapeType=cat;return b;});
   return{bags,bins,hint:'Match bags to bins by SHAPE'};}
@@ -465,7 +465,7 @@ function genNumberLevel(d){
   const nn=Math.min(2+Math.floor(d/2),8),nb=Math.min(3+d,14);
   const start=randInt(1,5),nums=Array.from({length:nn},(_,i)=>start+i);
   const colors=shuffle([...COLOR_KEYS]);
-  const pos=scatter(nb,[60,W-60],[75,H*0.5-50]);
+  const pos=scatter(nb,[60,W-60],[H*0.5+15,H-175]);
   const bags=pos.map((p,i)=>{const ni=i%nn;return new Bag(p[0],p[1],''+nums[ni],''+nums[ni],colors[i%colors.length],rand(28,40));});
   const bins=placeBins(nums.map(String),(x,y,cat,i)=>new Bin(x,y,cat,cat,colors[i%colors.length]));
   return{bags,bins,hint:'Match the NUMBERS'};}
@@ -490,7 +490,7 @@ function genStartLetterLevel(d){
   const avail=shuffle(Object.keys(groups)).slice(0,nl);
   const bagItems=[];while(bagItems.length<nb){for(const l of avail){const ws=groups[l];bagItems.push({w:ws[bagItems.length%ws.length],l});if(bagItems.length>=nb)break;}}
   shuffle(bagItems);
-  const pos=scatter(bagItems.length,[60,W-60],[75,H*0.5-50]);
+  const pos=scatter(bagItems.length,[60,W-60],[H*0.5+15,H-175]);
   const colors=shuffle([...COLOR_KEYS]);
   const bags=pos.map((p,i)=>new Bag(p[0],p[1],bagItems[i].l,bagItems[i].w,colors[i%colors.length],rand(28,40)));
   const bins=placeBins(avail,(x,y,cat,i)=>new Bin(x,y,cat,cat,colors[i%colors.length]));
@@ -590,7 +590,7 @@ function onDown(e){if(state!=='playing')return;const[mx,my]=getPos(e);
 function onMove(e){if(!dragging||state!=='playing')return;e.preventDefault();
   const[mx,my]=getPos(e);const m=dragging.size;
   dragging.x=Math.max(m,Math.min(W-m,mx+dragging.offsetX));
-  dragging.y=Math.max(m+50,Math.min(H-m,my+dragging.offsetY));}
+  dragging.y=Math.max(H*0.5,Math.min(H-m,my+dragging.offsetY));}
 
 function onUp(){if(!dragging)return;const bag=dragging;bag.dragging=false;dragging=null;canvas.style.cursor='default';
   for(const bin of bins){if(bin.contains(bag.x,bag.y)){
