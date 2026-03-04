@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Trash Puzzle</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #16161e; }
+  body { display: flex; justify-content: center; align-items: center; font-family: 'Consolas', 'Courier New', monospace; }
+  canvas { display: block; touch-action: none; cursor: default; }
+  #ui-overlay {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+  }
+  #congrats-screen, #complete-screen {
+    display: none; pointer-events: auto; text-align: center;
+    background: rgba(0,0,0,0.75); padding: 40px 60px; border-radius: 16px;
+  }
+  .overlay-title { font-size: 48px; font-weight: bold; color: #50d278; margin-bottom: 12px; }
+  .overlay-sub { font-size: 22px; color: #dddde6; margin-bottom: 8px; }
+  .overlay-stats { font-size: 16px; color: #8888a0; margin-bottom: 20px; }
+  .overlay-btn {
+    pointer-events: auto; font-family: inherit; font-size: 18px;
+    padding: 12px 32px; border: 2px solid #50d278; background: transparent;
+    color: #50d278; border-radius: 8px; cursor: pointer; transition: all 0.2s;
+  }
+  .overlay-btn:hover { background: #50d278; color: #16161e; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="ui-overlay">
+  <div id="congrats-screen">
+    <div class="overlay-title" id="congrats-msg">Alright!</div>
+    <div class="overlay-sub" id="congrats-sub">Level complete</div>
+    <div class="overlay-stats" id="congrats-stats"></div>
+    <button class="overlay-btn" id="next-btn">Next Level</button>
+  </div>
+  <div id="complete-screen">
+    <div class="overlay-title">All Sorted!</div>
+    <div class="overlay-sub" id="complete-stats"></div>
+    <div class="overlay-stats" id="complete-grade"></div>
+    <button class="overlay-btn" id="replay-btn">Play Again</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// --- Sizing ---
+let W, H, scale;
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const maxW = 900, maxH = 650;
+  const aspect = maxW / maxH;
+  let w = window.innerWidth, h = window.innerHeight;
+  if (w / h > aspect) { w = h * aspect; } else { h = w / aspect; }
+  W = maxW; H = maxH;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  scale = w / W;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// --- Colors ---
+const BG = '#16161e';
+const HEADER_BG = '#20202c';
+const FLOOR = '#1e1e28';
+const FLOOR_LINE = '#262632';
+const TEXT = '#dddde6';
+const TEXT_DIM = '#78788c';
+const SUCCESS = '#50d278';
+const ERROR = '#dc4646';
+
+const BAG_TYPES = {
+  black:  { label: 'General',   fill: '#32323a', dark: '#1e1e24', hi: '#4b4b52', bin: '#3c3c46', binLabel: '#b4b4be' },
+  green:  { label: 'Organic',   fill: '#2d823c', dark: '#1e5a28', hi: '#46aa55', bin: '#286e37', binLabel: '#a0f0aa' },
+  blue:   { label: 'Recycling', fill: '#3264b4', dark: '#1e4682', hi: '#508cdc', bin: '#2d5aa0', binLabel: '#8cbeff' },
+  yellow: { label: 'Plastic',   fill: '#c8b432', dark: '#96871e', hi: '#e6d25a', bin: '#aa9b2d', binLabel: '#fff078' },
+  red:    { label: 'Hazardous', fill: '#b43232', dark: '#821e1e', hi: '#dc5050', bin: '#a02d2d', binLabel: '#ff8c8c' },
+};
+
+function hexToRgb(hex) {
+  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  return [r,g,b];
+}
+
+const CONGRATS = ['Alright!', 'Good man!'];
+
+// --- Seeded randomish helpers ---
+function rand(a, b) { return a + Math.random() * (b - a); }
+function randInt(a, b) { return Math.floor(rand(a, b + 1)); }
+
+// --- Bag ---
+class TrashBag {
+  constructor(x, y, type, size) {
+    this.x = x; this.y = y;
+    this.type = type;
+    this.sizeName = size;
+    this.radius = { small: 24, medium: 32, large: 42 }[size];
+    this.dragging = false;
+    this.offsetX = 0; this.offsetY = 0;
+    this.disposed = false;
+    this.numPts = 20;
+    this.lumps = Array.from({length: this.numPts}, () => rand(0.78, 1.15));
+    this.wrinkles = [];
+    const nw = randInt(2, 4);
+    for (let i = 0; i < nw; i++) {
+      this.wrinkles.push({
+        angle: rand(0, Math.PI * 2),
+        len: rand(0.2, 0.5) * this.radius,
+        oa: rand(-0.3, 0.3) * this.radius,
+        ob: rand(-0.3, 0.3) * this.radius,
+      });
+    }
+    this.tieLean = rand(-4, 4);
+    this.rejectTimer = 0;
+    this.rejectOrigin = null;
+    this.shake = 0;
+  }
+
+  contains(mx, my) {
+    const dx = mx - this.x, dy = my - this.y;
+    return dx*dx + dy*dy <= (this.radius + 8) ** 2;
+  }
+
+  update(dt) {
+    if (this.rejectTimer > 0) {
+      this.rejectTimer -= dt;
+      if (this.rejectOrigin) {
+        const t = Math.max(0, 1 - this.rejectTimer / 0.4);
+        const s = t * t * (3 - 2 * t);
+        this.x += (this.rejectOrigin[0] - this.x) * Math.min(1, s * 0.15);
+        this.y += (this.rejectOrigin[1] - this.y) * Math.min(1, s * 0.15);
+      }
+      this.shake = Math.sin(this.rejectTimer * 30) * 4 * Math.max(0, this.rejectTimer / 0.4);
+      if (this.rejectTimer <= 0) {
+        this.rejectTimer = 0; this.shake = 0;
+        if (this.rejectOrigin) {
+          [this.x, this.y] = this.rejectOrigin;
+          this.rejectOrigin = null;
+        }
+      }
+    }
+  }
+
+  draw() {
+    if (this.disposed) return;
+    const c = BAG_TYPES[this.type];
+    const cx = this.x + this.shake, cy = this.y, r = this.radius;
+    const fill = hexToRgb(c.fill), dark = hexToRgb(c.dark), hi = hexToRgb(c.hi);
+
+    // Build lumpy outline
+    const pts = [];
+    for (let i = 0; i < this.numPts; i++) {
+      const angle = (i / this.numPts) * Math.PI * 2;
+      const lr = r * this.lumps[i];
+      const sx = 1.0 + 0.12 * Math.abs(Math.sin(angle));
+      const sy = 0.95 + 0.08 * Math.cos(angle);
+      pts.push([cx + Math.cos(angle) * lr * sx, cy + Math.sin(angle) * lr * sy + r * 0.08]);
+    }
+
+    // Shadow
+    ctx.save();
+    ctx.globalAlpha = 0.15;
+    ctx.beginPath();
+    for (let i = 0; i < this.numPts; i++) {
+      const angle = (i / this.numPts) * Math.PI * 2;
+      const lr = r * this.lumps[i] * 0.9;
+      const px = cx + Math.cos(angle) * lr * 1.05;
+      const py = cy + 6 + Math.sin(angle) * lr * 0.35 + r * 0.6;
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fillStyle = '#000';
+    ctx.fill();
+    ctx.restore();
+
+    // Main body
+    ctx.beginPath();
+    pts.forEach((p, i) => i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1]));
+    ctx.closePath();
+    ctx.fillStyle = c.fill;
+    ctx.fill();
+
+    // Bottom shading
+    ctx.save();
+    const grad = ctx.createLinearGradient(cx, cy - r, cx, cy + r);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(0.5, 'rgba(0,0,0,0.05)');
+    grad.addColorStop(1, `rgba(${dark[0]},${dark[1]},${dark[2]},0.5)`);
+    ctx.beginPath();
+    pts.forEach((p, i) => i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1]));
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.restore();
+
+    // Highlight
+    ctx.save();
+    const hg = ctx.createRadialGradient(cx - r*0.15, cy - r*0.3, 0, cx - r*0.15, cy - r*0.3, r*0.6);
+    hg.addColorStop(0, `rgba(${hi[0]},${hi[1]},${hi[2]},0.35)`);
+    hg.addColorStop(1, `rgba(${hi[0]},${hi[1]},${hi[2]},0)`);
+    ctx.beginPath();
+    pts.forEach((p, i) => i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1]));
+    ctx.closePath();
+    ctx.fillStyle = hg;
+    ctx.fill();
+    ctx.restore();
+
+    // Wrinkle lines
+    ctx.save();
+    ctx.strokeStyle = `rgba(${dark[0]},${dark[1]},${dark[2]},0.4)`;
+    ctx.lineWidth = 1;
+    for (const w of this.wrinkles) {
+      const x1 = cx + Math.cos(w.angle) * r * 0.15 + w.oa;
+      const y1 = cy + Math.sin(w.angle) * r * 0.15 + w.ob;
+      const x2 = x1 + Math.cos(w.angle + 0.3) * w.len;
+      const y2 = y1 + Math.sin(w.angle + 0.3) * w.len;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    }
+    ctx.restore();
+
+    // Outline
+    ctx.beginPath();
+    pts.forEach((p, i) => i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1]));
+    ctx.closePath();
+    ctx.strokeStyle = c.dark;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Tie knot
+    const kx = cx + this.tieLean, ky = cy - r * 0.85;
+    // Neck
+    ctx.beginPath();
+    ctx.moveTo(kx - 8, cy - r * 0.55);
+    ctx.lineTo(kx + 8, cy - r * 0.55);
+    ctx.lineTo(kx + 3, ky + 4);
+    ctx.lineTo(kx - 3, ky + 4);
+    ctx.closePath();
+    ctx.fillStyle = c.fill; ctx.fill();
+    ctx.strokeStyle = c.dark; ctx.lineWidth = 1; ctx.stroke();
+
+    // Ear loops
+    ctx.beginPath(); ctx.ellipse(kx - 7, ky - 2, 7, 6, 0, 0, Math.PI * 2);
+    ctx.fillStyle = c.fill; ctx.fill(); ctx.strokeStyle = c.dark; ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(kx + 7, ky - 2, 7, 6, 0, 0, Math.PI * 2);
+    ctx.fillStyle = c.fill; ctx.fill(); ctx.strokeStyle = c.dark; ctx.stroke();
+
+    // Knot center
+    ctx.beginPath(); ctx.arc(kx, ky, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = c.dark; ctx.fill();
+    ctx.beginPath(); ctx.arc(kx, ky, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = c.fill; ctx.fill();
+
+    // Size label
+    ctx.fillStyle = TEXT_DIM;
+    ctx.font = '11px Consolas, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(this.sizeName, cx, cy + r + 14);
+  }
+}
+
+// --- Bin ---
+class SortBin {
+  constructor(x, y, type, w, h) {
+    this.x = x; this.y = y; this.w = w || 90; this.h = h || 110;
+    this.type = type;
+    this.eaten = 0;
+    this.lidAnim = 0;
+    this.rejectFlash = 0;
+    this.glow = 0;
+  }
+
+  contains(bx, by) {
+    const m = 22;
+    return bx >= this.x - this.w/2 - m && bx <= this.x + this.w/2 + m &&
+           by >= this.y - this.h/2 - m && by <= this.y + this.h/2 + m;
+  }
+
+  accepts(bag) { return bag.type === this.type; }
+
+  update(dt) {
+    if (this.lidAnim > 0) this.lidAnim = Math.max(0, this.lidAnim - dt * 2.5);
+    if (this.rejectFlash > 0) this.rejectFlash = Math.max(0, this.rejectFlash - dt * 3);
+    if (this.glow > 0) this.glow = Math.max(0, this.glow - dt * 4);
+  }
+
+  draw() {
+    const c = BAG_TYPES[this.type];
+    const cx = this.x, cy = this.y, w = this.w, h = this.h;
+    const bin = hexToRgb(c.bin);
+    const lidOff = this.lidAnim > 0 ? Math.sin(this.lidAnim * Math.PI) * 14 : 0;
+
+    // Glow
+    if (this.glow > 0) {
+      ctx.save();
+      ctx.globalAlpha = 0.2 * this.glow;
+      roundRect(cx - w/2 - 12, cy - h/2 - 12, w + 24, h + 24, 10, c.hi);
+      ctx.restore();
+    }
+
+    // Reject flash
+    if (this.rejectFlash > 0) {
+      ctx.save();
+      ctx.globalAlpha = 0.3 * this.rejectFlash;
+      roundRect(cx - w/2 - 8, cy - h/2 - 8, w + 16, h + 16, 8, ERROR);
+      ctx.restore();
+    }
+
+    // Body
+    const bx = cx - w/2 + 3, by = cy - h/2 + 18, bw = w - 6, bh = h - 18;
+    roundRect(bx, by, bw, bh, 5, c.bin);
+
+    // Inner dark
+    const darker = `rgb(${Math.max(0,bin[0]-30)},${Math.max(0,bin[1]-30)},${Math.max(0,bin[2]-30)})`;
+    roundRect(cx - w/2 + 8, cy - h/2 + 20, w - 16, 12, 3, darker);
+
+    // Bands
+    const band = `rgb(${Math.min(255,bin[0]+15)},${Math.min(255,bin[1]+15)},${Math.min(255,bin[2]+15)})`;
+    ctx.strokeStyle = band; ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i++) {
+      const ly = cy - h/2 + 42 + i * 22;
+      ctx.beginPath(); ctx.moveTo(cx - w/2 + 6, ly); ctx.lineTo(cx + w/2 - 6, ly); ctx.stroke();
+    }
+
+    // Color stripe
+    roundRect(cx - w/2 + 10, cy + 5, w - 20, h/4, 3, c.fill);
+
+    // Label
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 12px Consolas, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(c.label, cx, cy + 19);
+
+    // Rim
+    const rim = `rgb(${Math.min(255,bin[0]+25)},${Math.min(255,bin[1]+25)},${Math.min(255,bin[2]+25)})`;
+    ctx.strokeStyle = rim; ctx.lineWidth = 2;
+    roundRectStroke(bx, by, bw, bh, 5);
+
+    // Lid
+    const lidY = cy - h/2 + 8 - lidOff;
+    roundRect(cx - w/2 - 1, lidY, w + 2, 16, 4, rim);
+    roundRect(cx - 8, lidY - 6, 16, 8, 3, rim);
+
+    // Count
+    if (this.eaten > 0) {
+      ctx.fillStyle = c.binLabel;
+      ctx.font = '13px Consolas, monospace';
+      ctx.fillText(String(this.eaten), cx, cy + h/2 + 16);
+    }
+  }
+}
+
+// --- Obstacle ---
+class Obstacle {
+  constructor(x, y, w, h) {
+    this.x = x; this.y = y; this.w = w; this.h = h;
+  }
+  collides(bx, by, br) {
+    const r = { x: this.x, y: this.y, w: this.w, h: this.h };
+    return bx + br > r.x && bx - br < r.x + r.w && by + br > r.y && by - br < r.y + r.h;
+  }
+  draw() {
+    const color = '#37324a';
+    const lighter = '#433e5a';
+    roundRect(this.x, this.y, this.w, this.h, 3, color);
+    // Brick lines
+    ctx.strokeStyle = lighter; ctx.lineWidth = 1;
+    const bw = 20, bh = 10;
+    for (let row = 0; row <= this.h / bh; row++) {
+      for (let col = 0; col <= this.w / bw; col++) {
+        const bx = this.x + col * bw + (row % 2 ? bw/2 : 0);
+        const by = this.y + row * bh;
+        if (bx >= this.x && bx <= this.x + this.w && by >= this.y && by <= this.y + this.h) {
+          ctx.beginPath(); ctx.moveTo(bx, Math.max(by, this.y)); ctx.lineTo(Math.min(bx + bw, this.x + this.w), Math.max(by, this.y)); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(bx, Math.max(by, this.y)); ctx.lineTo(bx, Math.min(by + bh, this.y + this.h)); ctx.stroke();
+        }
+      }
+    }
+    ctx.strokeStyle = lighter; ctx.lineWidth = 2;
+    roundRectStroke(this.x, this.y, this.w, this.h, 3);
+  }
+}
+
+// --- Draw helpers ---
+function roundRect(x, y, w, h, r, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y); ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h); ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath(); ctx.fill();
+}
+
+function roundRectStroke(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y); ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h); ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath(); ctx.stroke();
+}
+
+// --- Levels ---
+function scatterPositions(count, xRange, yRange, minDist) {
+  minDist = minDist || 70;
+  const pos = [];
+  for (let i = 0; i < count; i++) {
+    let placed = false;
+    for (let a = 0; a < 100; a++) {
+      const x = randInt(xRange[0], xRange[1]), y = randInt(yRange[0], yRange[1]);
+      if (pos.every(p => Math.hypot(x - p[0], y - p[1]) > minDist)) {
+        pos.push([x, y]); placed = true; break;
+      }
+    }
+    if (!placed) pos.push([randInt(xRange[0], xRange[1]), randInt(yRange[0], yRange[1])]);
+  }
+  return pos;
+}
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+const sizes = ['small', 'medium', 'large'];
+function rSize() { return sizes[Math.floor(Math.random() * 3)]; }
+
+function makeLevels() {
+  return [
+    // 1: 2 colors, 4 bags
+    () => {
+      const types = ['black', 'green'];
+      const pos = scatterPositions(4, [80, W-80], [80, 320]);
+      const bags = pos.map((p, i) => new TrashBag(p[0], p[1], types[i % 2], 'medium'));
+      const bins = [new SortBin(W/3, H-80, 'black'), new SortBin(2*W/3, H-80, 'green')];
+      return { bags, bins, obstacles: [], name: 'Sort Basics' };
+    },
+    // 2: 2 colors, 6 bags, mixed sizes
+    () => {
+      const types = ['black', 'green'];
+      const pos = scatterPositions(6, [80, W-80], [70, 320]);
+      const bags = pos.map((p, i) => new TrashBag(p[0], p[1], types[i % 2], rSize()));
+      const bins = [new SortBin(W/3, H-80, 'black'), new SortBin(2*W/3, H-80, 'green')];
+      return { bags, bins, obstacles: [], name: 'Size Mix' };
+    },
+    // 3: 3 colors
+    () => {
+      const types = ['black', 'green', 'blue'];
+      const pos = scatterPositions(6, [80, W-80], [70, 300]);
+      const bags = pos.map((p, i) => new TrashBag(p[0], p[1], types[i % 3], rSize()));
+      const sp = W / 4;
+      const bins = [new SortBin(sp, H-80, 'black'), new SortBin(sp*2, H-80, 'green'), new SortBin(sp*3, H-80, 'blue')];
+      return { bags, bins, obstacles: [], name: 'Recycling Day' };
+    },
+    // 4: 3 colors + obstacle
+    () => {
+      const types = ['black', 'green', 'blue'];
+      const pos = scatterPositions(9, [60, W-60], [65, 280]);
+      const bags = pos.map((p, i) => new TrashBag(p[0], p[1], types[i % 3], rSize()));
+      const sp = W / 4;
+      const bins = [new SortBin(sp, H-80, 'black'), new SortBin(sp*2, H-80, 'green'), new SortBin(sp*3, H-80, 'blue')];
+      return { bags, bins, obstacles: [new Obstacle(250, 340, 400, 16)], name: 'First Wall' };
+    },
+    // 5: 4 colors
+    () => {
+      const types = ['black', 'green', 'blue', 'yellow'];
+      const pos = scatterPositions(8, [60, W-60], [65, 280]);
+      const bags = pos.map((p, i) => new TrashBag(p[0], p[1], types[i % 4], rSize()));
+      const sp = W / 5;
+      const bins = types.map((t, i) => new SortBin(sp * (i+1), H-80, t));
+      return { bags, bins, obstacles: [], name: 'Four Colors' };
+    },
+    // 6: 4 colors + maze
+    () => {
+      const types = ['black', 'green', 'blue', 'yellow'];
+      const pos = scatterPositions(10, [60, W-60], [60, 260]);
+      const bags = pos.map((p, i) => new TrashBag(p[0], p[1], types[i % 4], rSize()));
+      const sp = W / 5;
+      const bins = types.map((t, i) => new SortBin(sp * (i+1), H-80, t));
+      return { bags, bins, obstacles: [
+        new Obstacle(150, 310, 200, 14),
+        new Obstacle(500, 310, 200, 14),
+        new Obstacle(380, 380, 14, 100),
+      ], name: 'Blocked Paths' };
+    },
+    // 7: 5 colors, 12 bags
+    () => {
+      const types = ['black', 'green', 'blue', 'yellow', 'red'];
+      let bt = []; types.forEach(t => { bt.push(t, t); }); bt.push(types[randInt(0,4)], types[randInt(0,4)]);
+      shuffle(bt);
+      const pos = scatterPositions(12, [55, W-55], [60, 250]);
+      const bags = pos.map((p, i) => new TrashBag(p[0], p[1], bt[i], rSize()));
+      const sp = W / 6;
+      const bins = types.map((t, i) => new SortBin(sp * (i+1), H-80, t));
+      return { bags, bins, obstacles: [
+        new Obstacle(100, 290, 250, 14),
+        new Obstacle(450, 290, 250, 14),
+        new Obstacle(330, 350, 14, 80),
+        new Obstacle(200, 410, 500, 14),
+      ], name: 'Full Sort' };
+    },
+    // 8: Gauntlet
+    () => {
+      const types = ['black', 'green', 'blue', 'yellow', 'red'];
+      let bt = []; types.forEach(t => { bt.push(t, t, t); });
+      shuffle(bt);
+      const pos = scatterPositions(15, [50, W-50], [55, 240], 55);
+      const bags = pos.map((p, i) => new TrashBag(p[0], p[1], bt[i], rSize()));
+      const sp = W / 6;
+      const bins = types.map((t, i) => new SortBin(sp * (i+1), H-80, t));
+      return { bags, bins, obstacles: [
+        new Obstacle(80, 275, 200, 14),
+        new Obstacle(350, 275, 200, 14),
+        new Obstacle(620, 275, 200, 14),
+        new Obstacle(200, 345, 14, 80),
+        new Obstacle(480, 345, 14, 80),
+        new Obstacle(680, 345, 14, 80),
+        new Obstacle(250, 415, 400, 14),
+      ], name: 'The Gauntlet' };
+    },
+  ];
+}
+
+// --- Game state ---
+let levels, levelIdx, bags, bins, obstacles, levelName;
+let dragging = null, state = 'playing';
+let totalSorted = 0, mistakes = 0;
+
+function loadLevel() {
+  if (levelIdx >= levels.length) { state = 'game_complete'; showComplete(); return; }
+  const l = levels[levelIdx]();
+  bags = l.bags; bins = l.bins; obstacles = l.obstacles; levelName = l.name;
+  state = 'playing'; dragging = null;
+  hideOverlays();
+}
+
+function startGame() {
+  levels = makeLevels(); levelIdx = 0;
+  totalSorted = 0; mistakes = 0;
+  loadLevel();
+}
+
+// --- UI overlays ---
+const congratsScreen = document.getElementById('congrats-screen');
+const completeScreen = document.getElementById('complete-screen');
+const congratsMsg = document.getElementById('congrats-msg');
+const congratsStats = document.getElementById('congrats-stats');
+const congratsSub = document.getElementById('congrats-sub');
+const completeStats = document.getElementById('complete-stats');
+const completeGrade = document.getElementById('complete-grade');
+
+function hideOverlays() { congratsScreen.style.display = 'none'; completeScreen.style.display = 'none'; }
+
+function showCongrats() {
+  congratsMsg.textContent = CONGRATS[Math.floor(Math.random() * CONGRATS.length)];
+  congratsSub.textContent = `Level ${levelIdx + 1} complete`;
+  congratsStats.textContent = `Sorted: ${totalSorted}  |  Mistakes: ${mistakes}`;
+  document.getElementById('next-btn').textContent = levelIdx + 1 < levels.length ? 'Next Level' : 'Play Again';
+  congratsScreen.style.display = 'block';
+}
+
+function showComplete() {
+  completeStats.textContent = `Bags sorted: ${totalSorted}  |  Mistakes: ${mistakes}`;
+  completeGrade.textContent = mistakes === 0 ? 'Perfect!' : mistakes < 5 ? 'Good job!' : 'Keep practicing!';
+  completeScreen.style.display = 'block';
+}
+
+document.getElementById('next-btn').addEventListener('click', () => {
+  levelIdx++;
+  if (levelIdx >= levels.length) { levelIdx = 0; totalSorted = 0; mistakes = 0; levels = makeLevels(); }
+  loadLevel();
+});
+document.getElementById('replay-btn').addEventListener('click', () => { startGame(); });
+
+// --- Input (mouse + touch) ---
+function getPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const touch = e.touches ? e.touches[0] || e.changedTouches[0] : e;
+  return [(touch.clientX - rect.left) / scale, (touch.clientY - rect.top) / scale];
+}
+
+function onDown(e) {
+  if (state !== 'playing') return;
+  const [mx, my] = getPos(e);
+  for (let i = bags.length - 1; i >= 0; i--) {
+    const b = bags[i];
+    if (!b.disposed && b.rejectTimer <= 0 && b.contains(mx, my)) {
+      b.dragging = true;
+      b.offsetX = b.x - mx; b.offsetY = b.y - my;
+      dragging = b;
+      bags.splice(i, 1); bags.push(b);
+      break;
+    }
+  }
+}
+
+function onMove(e) {
+  if (!dragging || state !== 'playing') return;
+  e.preventDefault();
+  const [mx, my] = getPos(e);
+  let nx = mx + dragging.offsetX, ny = my + dragging.offsetY;
+  const m = dragging.radius;
+  nx = Math.max(m, Math.min(W - m, nx));
+  ny = Math.max(m + 48, Math.min(H - m, ny));
+
+  const collides = (bx, by) => obstacles.some(o => o.collides(bx, by, dragging.radius));
+
+  if (!collides(nx, ny)) { dragging.x = nx; dragging.y = ny; }
+  else if (!collides(nx, dragging.y)) { dragging.x = nx; }
+  else if (!collides(dragging.x, ny)) { dragging.y = ny; }
+}
+
+function onUp(e) {
+  if (!dragging) return;
+  const bag = dragging;
+  bag.dragging = false;
+  dragging = null;
+
+  // Check bins
+  for (const bin of bins) {
+    if (bin.contains(bag.x, bag.y)) {
+      if (bin.accepts(bag)) {
+        bag.disposed = true;
+        bin.lidAnim = 1.0;
+        bin.eaten++;
+        totalSorted++;
+        if (bags.every(b => b.disposed)) {
+          state = 'level_complete';
+          setTimeout(showCongrats, 300);
+        }
+      } else {
+        bin.rejectFlash = 1.0;
+        bag.rejectTimer = 0.4;
+        bag.rejectOrigin = [bag.x, bag.y];
+        mistakes++;
+      }
+      return;
+    }
+  }
+}
+
+canvas.addEventListener('mousedown', onDown);
+canvas.addEventListener('mousemove', onMove);
+canvas.addEventListener('mouseup', onUp);
+canvas.addEventListener('touchstart', onDown, { passive: false });
+canvas.addEventListener('touchmove', onMove, { passive: false });
+canvas.addEventListener('touchend', onUp);
+
+// Keyboard
+document.addEventListener('keydown', e => {
+  if (e.key === 'r' || e.key === 'R') loadLevel();
+  if (e.key === ' ') {
+    if (state === 'level_complete') { document.getElementById('next-btn').click(); }
+    else if (state === 'game_complete') { document.getElementById('replay-btn').click(); }
+  }
+});
+
+// --- Main loop ---
+let lastTime = 0;
+function loop(time) {
+  const dt = Math.min((time - lastTime) / 1000, 0.05);
+  lastTime = time;
+
+  // Update
+  bags.forEach(b => b.update(dt));
+  bins.forEach(b => {
+    b.update(dt);
+    if (dragging && b.contains(dragging.x, dragging.y) && b.accepts(dragging)) {
+      b.glow = 1.0;
+    }
+  });
+
+  // Draw
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, W, H);
+
+  // Floor
+  ctx.fillStyle = FLOOR;
+  ctx.fillRect(0, H - 150, W, 150);
+  ctx.strokeStyle = FLOOR_LINE; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, H - 150); ctx.lineTo(W, H - 150); ctx.stroke();
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 60) {
+    ctx.beginPath(); ctx.moveTo(x, H - 150); ctx.lineTo(x, H); ctx.stroke();
+  }
+
+  // Header
+  ctx.fillStyle = HEADER_BG;
+  ctx.fillRect(0, 0, W, 46);
+
+  ctx.fillStyle = TEXT; ctx.font = '17px Consolas, monospace'; ctx.textAlign = 'left';
+  ctx.fillText(`Level ${levelIdx + 1}/${levels.length}  |  ${levelName}`, 14, 29);
+
+  ctx.fillStyle = TEXT_DIM; ctx.textAlign = 'right';
+  const remaining = bags.filter(b => !b.disposed).length;
+  ctx.fillText(`Bags: ${remaining}  Mistakes: ${mistakes}`, W - 14, 29);
+
+  // Hint on level 1
+  if (levelIdx === 0 && state === 'playing') {
+    ctx.fillStyle = TEXT_DIM; ctx.font = '13px Consolas, monospace'; ctx.textAlign = 'center';
+    ctx.fillText('Drag each bag to the bin that matches its color', W/2, 62);
+  }
+
+  // Controls
+  ctx.fillStyle = '#3c3c4b'; ctx.font = '13px Consolas, monospace'; ctx.textAlign = 'center';
+  ctx.fillText('R = restart  |  ESC = quit', W/2, H - 6);
+
+  // Obstacles
+  obstacles.forEach(o => o.draw());
+
+  // Drop zone highlights
+  if (dragging) {
+    for (const b of bins) {
+      if (b.contains(dragging.x, dragging.y)) {
+        const m = 22;
+        const zx = b.x - b.w/2 - m, zy = b.y - b.h/2 - m, zw = b.w + m*2, zh = b.h + m*2;
+        ctx.save();
+        if (b.accepts(dragging)) {
+          ctx.globalAlpha = 0.12;
+          roundRect(zx, zy, zw, zh, 8, SUCCESS);
+          ctx.globalAlpha = 0.4;
+          ctx.strokeStyle = SUCCESS; ctx.lineWidth = 2;
+          roundRectStroke(zx, zy, zw, zh, 8);
+        } else {
+          ctx.globalAlpha = 0.1;
+          roundRect(zx, zy, zw, zh, 8, ERROR);
+          ctx.globalAlpha = 0.35;
+          ctx.strokeStyle = ERROR; ctx.lineWidth = 2;
+          roundRectStroke(zx, zy, zw, zh, 8);
+        }
+        ctx.restore();
+      }
+    }
+  }
+
+  // Bins
+  bins.forEach(b => b.draw());
+
+  // Bags
+  bags.forEach(b => b.draw());
+
+  requestAnimationFrame(loop);
+}
+
+startGame();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
