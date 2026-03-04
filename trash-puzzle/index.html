@@ -87,6 +87,19 @@ function resize() {
 }
 window.addEventListener('resize', resize); resize();
 
+// Polyfill roundRect for older browsers
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r) {
+    if (typeof r === 'number') r = [r,r,r,r];
+    if (Array.isArray(r)) { while(r.length<4) r.push(r[r.length-1]||0); }
+    const [tl,tr,br,bl] = r;
+    this.moveTo(x+tl,y); this.lineTo(x+w-tr,y); this.arcTo(x+w,y,x+w,y+tr,tr);
+    this.lineTo(x+w,y+h-br); this.arcTo(x+w,y+h,x+w-br,y+h,br);
+    this.lineTo(x+bl,y+h); this.arcTo(x,y+h,x,y+h-bl,bl);
+    this.lineTo(x,y+tl); this.arcTo(x,y,x+tl,y,tl); this.closePath();
+  };
+}
+
 function rand(a, b) { return a + Math.random() * (b - a); }
 function randInt(a, b) { return Math.floor(rand(a, b + 1)); }
 function shuffle(a) { for (let i = a.length-1; i > 0; i--) { const j = randInt(0, i); [a[i],a[j]] = [a[j],a[i]]; } return a; }
@@ -591,7 +604,7 @@ canvas.addEventListener('touchstart',onDown,{passive:false});canvas.addEventList
 
 document.addEventListener('keydown',e=>{
   if(e.key==='r'||e.key==='R')loadLevel(levelIdx);
-  if(e.key==='l'||e.key==='L'){state==='playing'?showLevelSelect():hidePopups();}
+  if(e.key==='l'||e.key==='L'){if(levelSelect.style.display==='block')hidePopups();else{hidePopups();showLevelSelect();}}
   if(e.key===' '&&state==='level_complete')popBtn.click();
   if(e.key==='Escape')hidePopups();});
 
