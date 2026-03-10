@@ -17,9 +17,12 @@ const MOVE_DELAY = 120;
 
 // World
 let currentZone = 0, zones = [];
-let particles = [], dialogText = '', dialogCallback = null;
+let particles = [], projectiles = [], pickups = [];
+let dialogText = '', dialogCallback = null;
 let shakeTimer = 0, transTimer = 0, flashAlpha = 0;
 let dmgCooldown = 0; // invincibility after hit
+let comboCount = 0, comboTimer = 0; // combo system
+let floatingTexts = []; // damage/score popups
 
 // Audio - simple synth beeps
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -87,6 +90,14 @@ function spawnParticles(x, y, color, count) {
   }
 }
 
+function spawnFloatingText(x, y, text, color) {
+  floatingTexts.push({ x: x * TILE + TILE / 2, y: y * TILE, text, color, life: 40 });
+}
+
+function spawnPickup(x, y, type) {
+  pickups.push({ x, y, type, life: 600 }); // 10 second lifetime
+}
+
 function showDialog(text, cb) {
   dialogText = text; dialogCallback = cb || null; state = STATE.DIALOG;
 }
@@ -105,7 +116,8 @@ function update(dt) {
       tryAction(); state = STATE.PLAY;
       zones = buildAllZones();
       player.x = 3; player.y = 7; player.hp = 5; player.trash = 0; player.score = 0;
-      currentZone = 0; dmgCooldown = 0;
+      currentZone = 0; dmgCooldown = 0; comboCount = 0; comboTimer = 0;
+      particles = []; projectiles = []; pickups = []; floatingTexts = [];
     }
     return;
   }
@@ -170,17 +182,40 @@ function update(dt) {
   for (const t of zone.trash) {
     if (!t.collected && player.x === t.x && player.y === t.y) {
       t.collected = true;
-      player.trash++; player.score += 10;
+      player.trash++;
+      comboCount++; comboTimer = 2000;
+      const pts = 10 * Math.min(comboCount, 5);
+      player.score += pts;
       spawnParticles(t.x, t.y, '#50d278', 8);
+      spawnFloatingText(t.x, t.y, '+' + pts + (comboCount > 1 ? ' x' + comboCount : ''), '#50d278');
       sfxCollect();
       if (zone.trash.every(t2 => t2.collected)) {
         zone.cleared = true;
         spawnParticles(player.x, player.y, '#ffd700', 20);
         sfxClear();
+        showDialog(zone.name + ' cleared! All trash collected!');
         if (currentZone === zones.length - 1 && zone.enemies.every(e => e.hp <= 0)) {
           state = STATE.WIN; return;
         }
       }
+    }
+  }
+
+  // Collect pickups
+  for (let i = pickups.length - 1; i >= 0; i--) {
+    const pk = pickups[i];
+    pk.life--;
+    if (pk.life <= 0) { pickups.splice(i, 1); continue; }
+    if (player.x === pk.x && player.y === pk.y) {
+      if (pk.type === 'heart' && player.hp < player.maxHp) {
+        player.hp++; spawnFloatingText(pk.x, pk.y, '+HP', '#ff4444');
+        playSound(660, 0.15, 'sine', 0.08);
+      } else if (pk.type === 'star') {
+        player.score += 50; spawnFloatingText(pk.x, pk.y, '+50', '#ffd700');
+        playSound(880, 0.1, 'sine', 0.08);
+      }
+      spawnParticles(pk.x, pk.y, pk.type === 'heart' ? '#ff4444' : '#ffd700', 6);
+      pickups.splice(i, 1);
     }
   }
 
@@ -201,26 +236,35 @@ function update(dt) {
     if (player.trash > 0) {
       const dirs = [{ dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }];
       const d = dirs[player.dir];
+      // Spawn projectile
+      projectiles.push({ x: player.x * TILE + TILE / 2, y: player.y * TILE + TILE / 2, vx: d.dx * 6, vy: d.dy * 6, life: 20 });
+      player.trash--;
+      let hitAny = false;
       for (const enemy of zone.enemies) {
         if (enemy.hp <= 0) continue;
         const dist = Math.abs(enemy.x - (player.x + d.dx * 2)) + Math.abs(enemy.y - (player.y + d.dy * 2));
         if (dist <= 2) {
           enemy.hp--; enemy.stunTimer = 500;
-          player.trash--; player.score += 25;
+          player.score += 25; hitAny = true;
           spawnParticles(enemy.x, enemy.y, '#ff4444', 6);
+          spawnFloatingText(enemy.x, enemy.y, '-1', '#ff4444');
           shakeTimer = 100; sfxHit();
           if (enemy.hp <= 0) {
             spawnParticles(enemy.x, enemy.y, '#ffd700', 15);
             player.score += 100;
+            spawnFloatingText(enemy.x, enemy.y, '+100', '#ffd700');
+            // Drop pickup
+            if (Math.random() < 0.5) spawnPickup(enemy.x, enemy.y, 'heart');
+            else spawnPickup(enemy.x, enemy.y, 'star');
             if (enemy.type === 'boss') {
-              zone.cleared = true;
-              sfxBoss();
+              zone.cleared = true; sfxBoss();
               showDialog('You defeated the Trash King! The dump is saved!');
             }
           }
           break;
         }
       }
+      if (!hitAny) playSound(300, 0.05, 'square', 0.04); // whiff sound
     }
   }
 
@@ -256,6 +300,22 @@ function update(dt) {
       }
       if (player.hp <= 0) state = STATE.GAMEOVER;
     }
+  }
+
+  // Combo timer
+  if (comboTimer > 0) { comboTimer -= dt; if (comboTimer <= 0) comboCount = 0; }
+
+  // Projectiles
+  for (let i = projectiles.length - 1; i >= 0; i--) {
+    const p = projectiles[i];
+    p.x += p.vx; p.y += p.vy; p.life--;
+    if (p.life <= 0) projectiles.splice(i, 1);
+  }
+
+  // Floating texts
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    floatingTexts[i].y -= 1; floatingTexts[i].life--;
+    if (floatingTexts[i].life <= 0) floatingTexts.splice(i, 1);
   }
 
   // Particles
@@ -295,13 +355,21 @@ function draw() {
 
   // Trash
   for (const t of zone.trash) { if (!t.collected) drawTrashItem(t, theme.ground); }
+  // Pickups
+  for (const pk of pickups) drawPickup(pk);
   // NPCs
   for (const npc of zone.npcs) drawNPC(npc);
   // Enemies
   for (const enemy of zone.enemies) { if (enemy.hp > 0) drawEnemy(enemy); }
   // Player (flash if invincible)
   if (dmgCooldown <= 0 || Math.floor(Date.now() / 80) % 2 === 0) drawPlayer();
-
+  // Projectiles
+  for (const p of projectiles) {
+    ctx.fillStyle = '#ffaa33';
+    ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffdd88';
+    ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, Math.PI * 2); ctx.fill();
+  }
   // Particles
   for (const p of particles) {
     ctx.globalAlpha = p.life / 50;
@@ -309,9 +377,27 @@ function draw() {
     ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
   }
   ctx.globalAlpha = 1;
+  // Floating texts
+  for (const ft of floatingTexts) {
+    ctx.globalAlpha = ft.life / 40;
+    ctx.fillStyle = ft.color;
+    ctx.font = 'bold 12px Consolas';
+    ctx.textAlign = 'center';
+    ctx.fillText(ft.text, ft.x, ft.y);
+  }
+  ctx.globalAlpha = 1;
   ctx.restore();
 
   drawHUD(zone);
+  // Minimap
+  drawMinimap(zone);
+  // Combo indicator
+  if (comboCount > 1) {
+    ctx.fillStyle = '#ffd700';
+    ctx.font = 'bold 14px Consolas';
+    ctx.textAlign = 'right';
+    ctx.fillText('COMBO x' + comboCount, W - 10, 46);
+  }
   if (state === STATE.DIALOG) drawDialog();
   if (flashAlpha > 0) {
     ctx.globalAlpha = flashAlpha;

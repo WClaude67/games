@@ -163,6 +163,54 @@ function drawPlayer() {
   }
 }
 
+function drawPickup(pk) {
+  const x = pk.x * TILE, y = pk.y * TILE;
+  const bob = Math.sin(Date.now() / 250 + pk.x) * 3;
+  const alpha = pk.life < 100 ? pk.life / 100 : 1;
+  ctx.globalAlpha = alpha;
+  if (pk.type === 'heart') {
+    ctx.fillStyle = '#ff4444';
+    ctx.font = '20px Consolas';
+    ctx.textAlign = 'center';
+    ctx.fillText('\u2665', x + TILE / 2, y + TILE / 2 + 6 + bob);
+  } else if (pk.type === 'star') {
+    ctx.fillStyle = '#ffd700';
+    ctx.font = '20px Consolas';
+    ctx.textAlign = 'center';
+    ctx.fillText('\u2605', x + TILE / 2, y + TILE / 2 + 6 + bob);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawMinimap(zone) {
+  const mx = W - 70, my = 34, ms = 3;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(mx - 2, my - 2, COLS * ms + 4, ROWS * ms + 4);
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const ch = zone.tiles[r][c];
+      if (ch === 'T' || ch === 'B' || ch === 'W') ctx.fillStyle = '#333';
+      else if (ch === '~') ctx.fillStyle = '#224488';
+      else if (ch === '>' || ch === '<') ctx.fillStyle = zone.cleared ? '#50d278' : '#663333';
+      else ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(mx + c * ms, my + r * ms, ms, ms);
+    }
+  }
+  // Trash dots
+  for (const t of zone.trash) {
+    if (!t.collected) { ctx.fillStyle = '#ffaa33'; ctx.fillRect(mx + t.x * ms, my + t.y * ms, ms, ms); }
+  }
+  // Enemy dots
+  for (const e of zone.enemies) {
+    if (e.hp > 0) { ctx.fillStyle = '#ff4444'; ctx.fillRect(mx + e.x * ms, my + e.y * ms, ms, ms); }
+  }
+  // Player dot (blinking)
+  if (Math.floor(Date.now() / 300) % 2 === 0) {
+    ctx.fillStyle = '#50d278';
+    ctx.fillRect(mx + player.x * ms, my + player.y * ms, ms, ms);
+  }
+}
+
 function drawHUD(zone) {
   ctx.fillStyle = 'rgba(0,0,0,0.7)';
   ctx.fillRect(0, 0, W, 28);
