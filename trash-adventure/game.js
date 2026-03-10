@@ -190,12 +190,19 @@ function update(dt) {
       spawnFloatingText(t.x, t.y, '+' + pts + (comboCount > 1 ? ' x' + comboCount : ''), '#50d278');
       sfxCollect();
       if (zone.trash.every(t2 => t2.collected)) {
-        zone.cleared = true;
         spawnParticles(player.x, player.y, '#ffd700', 20);
         sfxClear();
-        showDialog(zone.name + ' cleared! All trash collected!');
-        if (currentZone === zones.length - 1 && zone.enemies.every(e => e.hp <= 0)) {
-          state = STATE.WIN; return;
+        if (currentZone === zones.length - 1) {
+          if (zone.enemies.filter(e => e.type === 'boss').every(e => e.hp <= 0)) {
+            zone.cleared = true;
+            showDialog('All trash collected and Trash King defeated! Earth is saved!');
+            state = STATE.WIN; return;
+          } else {
+            showDialog('All trash collected! Now defeat the Trash King!');
+          }
+        } else {
+          zone.cleared = true;
+          showDialog(zone.name + ' cleared! The exit is now open!');
         }
       }
     }
@@ -207,8 +214,9 @@ function update(dt) {
     pk.life--;
     if (pk.life <= 0) { pickups.splice(i, 1); continue; }
     if (player.x === pk.x && player.y === pk.y) {
-      if (pk.type === 'heart' && player.hp < player.maxHp) {
-        player.hp++; spawnFloatingText(pk.x, pk.y, '+HP', '#ff4444');
+      if (pk.type === 'heart') {
+        if (player.hp < player.maxHp) { player.hp++; spawnFloatingText(pk.x, pk.y, '+HP', '#ff4444'); }
+        else { player.score += 20; spawnFloatingText(pk.x, pk.y, '+20', '#ff8888'); }
         playSound(660, 0.15, 'sine', 0.08);
       } else if (pk.type === 'star') {
         player.score += 50; spawnFloatingText(pk.x, pk.y, '+50', '#ffd700');
@@ -257,8 +265,14 @@ function update(dt) {
             if (Math.random() < 0.5) spawnPickup(enemy.x, enemy.y, 'heart');
             else spawnPickup(enemy.x, enemy.y, 'star');
             if (enemy.type === 'boss') {
-              zone.cleared = true; sfxBoss();
-              showDialog('You defeated the Trash King! The dump is saved!');
+              sfxBoss();
+              if (zone.trash.every(t2 => t2.collected)) {
+                zone.cleared = true;
+                showDialog('You defeated the Trash King and cleaned the dump! Earth is saved!');
+                state = STATE.WIN; return;
+              } else {
+                showDialog('Trash King defeated! Now collect all remaining trash!');
+              }
             }
           }
           break;
