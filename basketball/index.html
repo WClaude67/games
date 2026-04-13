@@ -304,18 +304,23 @@ function drawBall() {
 
 function drawFlingGuide() {
   if (!fling.down||state!=='shooting') return;
-  X.strokeStyle='rgba(255,255,255,0.4)'; X.lineWidth=2; X.setLineDash([6,4]);
-  X.beginPath(); X.moveTo(fling.sx,fling.sy); X.lineTo(fling.cx,fling.cy); X.stroke();
-  X.setLineDash([]);
-  const dx=fling.sx-fling.cx, dy=fling.sy-fling.cy, len=Math.sqrt(dx*dx+dy*dy);
-  if (len>15) {
-    const nx=dx/len, ny=dy/len;
-    const tx=W/2+nx*50, ty=H*0.85+ny*50;
-    X.fillStyle='rgba(255,255,255,0.5)';
-    X.beginPath();
-    X.moveTo(tx,ty); X.lineTo(tx-ny*7-nx*7,ty+nx*7-ny*7); X.lineTo(tx+ny*7-nx*7,ty-nx*7-ny*7);
-    X.closePath(); X.fill();
-  }
+  const dx=fling.cx-fling.sx, dy=fling.cy-fling.sy, len=Math.sqrt(dx*dx+dy*dy);
+  if (len<10) return;
+  const nx=dx/len, ny=dy/len;
+  // Arrow shaft from ball toward drag direction
+  const ox=W/2, oy=H*0.85;
+  const shaftLen=Math.min(len*0.8, 120);
+  const ex=ox+nx*shaftLen, ey=oy+ny*shaftLen;
+  X.strokeStyle='rgba(255,255,255,0.6)'; X.lineWidth=3; X.lineCap='round';
+  X.beginPath(); X.moveTo(ox,oy); X.lineTo(ex,ey); X.stroke();
+  // Arrowhead
+  const hs=14;
+  X.fillStyle='rgba(255,255,255,0.7)';
+  X.beginPath();
+  X.moveTo(ex+nx*hs, ey+ny*hs);
+  X.lineTo(ex-ny*hs*0.6-nx*2, ey+nx*hs*0.6-ny*2);
+  X.lineTo(ex+ny*hs*0.6-nx*2, ey-nx*hs*0.6-ny*2);
+  X.closePath(); X.fill();
 }
 
 function drawParticles() {
@@ -374,7 +379,7 @@ function shoot(dx, dy) {
   if (len<20) return;
 
   ball.x=W/2; ball.y=H*0.85;
-  const offsetX = -dx*0.3;
+  const offsetX = dx*0.3;
   // Snap toward center when close (so makes visually go through hoop)
   const rawTX = RCX() + offsetX;
   const distFromCenter = Math.abs(rawTX - RCX());
@@ -388,7 +393,7 @@ function shoot(dx, dy) {
   if (miss < rw*0.5) scored=true;
   else if (miss < rw*0.8) scored=Math.random()<0.5;
   else scored=false;
-  if (dy > -15) scored=false;
+  if (dy < 15) scored=false;
   ball.scored=scored;
   state='flight';
 }
@@ -426,7 +431,7 @@ function showCourtDone() {
 function nextCourt() {
   popup.style.display='none'; court++; made=0;
   trans.alpha=0; trans.dir=1;
-  trans.cb=()=>{state='shooting'; hintEl.textContent='Swipe up to shoot!'; updateHUD();};
+  trans.cb=()=>{state='shooting'; hintEl.textContent='Fling toward the hoop!'; updateHUD();};
   state='transition';
 }
 function startRunHome() { state='runHome'; runT=0; say('Heading home!'); hintEl.textContent=''; }
@@ -437,14 +442,14 @@ function showFinal() {
   say('You made it home! '+totalMade+' total shots!');
   document.getElementById('btn-again').onclick=resetGame;
 }
-function resetGame() { popup.style.display='none'; court=0;made=0;totalMade=0; state='shooting'; updateHUD(); hintEl.textContent='Swipe up to shoot!'; }
+function resetGame() { popup.style.display='none'; court=0;made=0;totalMade=0; state='shooting'; updateHUD(); hintEl.textContent='Fling toward the hoop!'; }
 function showTitle() {
   state='title';
-  popup.innerHTML=`<div class="pop-title">&#127936; Hoops Run</div><div class="pop-sub">Make 30 shots at each court, then run to the next!</div><div class="pop-stats">Swipe up to fling the ball at the hoop.<br>Miss and your count resets!</div><button class="pop-btn" id="btn-start">Let's Go!</button>`;
+  popup.innerHTML=`<div class="pop-title">&#127936; Hoops Run</div><div class="pop-sub">Make 30 shots at each court, then run to the next!</div><div class="pop-stats">Fling toward the hoop to shoot!<br>Miss and your count resets!</div><button class="pop-btn" id="btn-start">Let's Go!</button>`;
   popup.style.display='block';
   document.getElementById('btn-start').onclick=startGame;
 }
-function startGame() { popup.style.display='none'; court=0;made=0;totalMade=0; state='shooting'; updateHUD(); hintEl.textContent='Swipe up to shoot!'; }
+function startGame() { popup.style.display='none'; court=0;made=0;totalMade=0; state='shooting'; updateHUD(); hintEl.textContent='Fling toward the hoop!'; }
 
 // ======== INPUT ========
 function pDown(x,y){if(state!=='shooting'||ball.active)return;fling.down=true;fling.sx=x;fling.sy=y;fling.cx=x;fling.cy=y;}
