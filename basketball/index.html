@@ -14,11 +14,12 @@
     display: flex; justify-content: space-between; pointer-events: none; z-index: 5;
   }
   .hud-box {
-    background: rgba(0,0,0,0.45); color: #fff; padding: 6px 14px;
-    border-radius: 10px; font-size: 15px; font-weight: 600;
-    backdrop-filter: blur(4px);
+    background: rgba(0,0,0,0.65); color: #fff; padding: 8px 18px;
+    border-radius: 10px; font-size: 20px; font-weight: 700;
+    backdrop-filter: blur(4px); transition: transform 0.15s, background 0.3s;
   }
-  .hud-box .label { color: #f8a000; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+  .hud-box.flash { transform: scale(1.25); background: rgba(248,160,0,0.7); }
+  .hud-box .label { color: #f8a000; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
   #overlay {
     position: absolute; top: 0; left: 0; width: 100%; height: 100%;
     pointer-events: none; display: flex; align-items: center; justify-content: center; z-index: 10;
@@ -260,27 +261,28 @@ function drawHoop() {
 
 function drawHands() {
   if (state!=='shooting'||ball.active) return;
-  const hy=H*0.87, sp=28;
-  const bg=X.createRadialGradient(W/2-2,hy-2,2,W/2,hy,15);
+  const hy=H*0.85, sp=48;
+  const bg=X.createRadialGradient(W/2-4,hy-4,4,W/2,hy,42);
   bg.addColorStop(0,'#f8a000'); bg.addColorStop(0.6,'#e85d04'); bg.addColorStop(1,'#b84400');
-  X.fillStyle=bg; X.beginPath(); X.arc(W/2,hy,15,0,Math.PI*2); X.fill();
-  X.strokeStyle='rgba(0,0,0,0.15)'; X.lineWidth=1;
-  X.beginPath(); X.moveTo(W/2-15,hy); X.lineTo(W/2+15,hy); X.stroke();
+  X.fillStyle=bg; X.beginPath(); X.arc(W/2,hy,42,0,Math.PI*2); X.fill();
+  X.strokeStyle='rgba(0,0,0,0.15)'; X.lineWidth=2;
+  X.beginPath(); X.moveTo(W/2-42,hy); X.lineTo(W/2+42,hy); X.stroke();
+  X.beginPath(); X.moveTo(W/2,hy-42); X.lineTo(W/2,hy+42); X.stroke();
   X.fillStyle='#c4813a';
-  X.beginPath(); X.ellipse(W/2-sp,hy+3,13,9,-0.2,0,Math.PI*2); X.fill();
-  X.beginPath(); X.ellipse(W/2+sp,hy+3,13,9,0.2,0,Math.PI*2); X.fill();
+  X.beginPath(); X.ellipse(W/2-sp,hy+5,18,13,-0.2,0,Math.PI*2); X.fill();
+  X.beginPath(); X.ellipse(W/2+sp,hy+5,18,13,0.2,0,Math.PI*2); X.fill();
 }
 
 function drawBall() {
   if (!ball.active) return;
   const prog=ball.t/ball.dur;
-  const sc=1-prog*0.55, r=14*sc;
+  const sc=1-prog*0.55, r=42*sc;
   const arc=-190*Math.sin(prog*Math.PI);
   const bx=ball.x+(ball.tx-ball.x)*prog;
   const by=ball.y+(ball.ty-ball.y)*prog+arc;
 
-  X.fillStyle='rgba(0,0,0,0.12)';
-  X.beginPath(); X.ellipse(bx,CT()+(CB()-CT())*0.3,r*0.7,r*0.15,0,0,Math.PI*2); X.fill();
+  X.fillStyle='rgba(0,0,0,0.10)';
+  X.beginPath(); X.ellipse(bx,CT()+(CB()-CT())*0.3,r*0.6,r*0.12,0,0,Math.PI*2); X.fill();
 
   const bg=X.createRadialGradient(bx-r*0.3,by-r*0.3,r*0.1,bx,by,r);
   bg.addColorStop(0,'#f8a000'); bg.addColorStop(0.6,'#e85d04'); bg.addColorStop(1,'#b84400');
@@ -345,10 +347,15 @@ function drawRunHome() {
 }
 
 // ======== GAME LOGIC ========
-function updateHUD() {
+function updateHUD(scored) {
   document.getElementById('hud-court').textContent=`${court+1}/${COURTS}`;
   document.getElementById('hud-shots').textContent=`${made}/${NEEDED}`;
   document.getElementById('hud-total').textContent=totalMade;
+  if (scored) {
+    const boxes = document.querySelectorAll('.hud-box');
+    boxes.forEach(b => { b.classList.add('flash'); });
+    setTimeout(() => { boxes.forEach(b => { b.classList.remove('flash'); }); }, 350);
+  }
 }
 
 function shoot(dx, dy) {
@@ -367,10 +374,10 @@ function shoot(dx, dy) {
 
   const miss=Math.abs(ball.tx-RCX());
   let scored;
-  if (miss < rw*0.65) scored=true;
-  else if (miss < rw) scored=Math.random()<0.5;
+  if (miss < rw*0.3) scored=true;
+  else if (miss < rw*0.55) scored=Math.random()<0.45;
   else scored=false;
-  if (dy > -15) scored=false;
+  if (dy > -20) scored=false;
   ball.scored=scored;
   state='flight';
 }
@@ -391,7 +398,7 @@ function onShotLand() {
     made=0;
     burst(ball.tx+(Math.random()-0.5)*20,ball.ty,'#888',6);
   }
-  updateHUD();
+  updateHUD(ball.scored);
   if (made>=NEEDED) {
     setTimeout(()=>{ if(court<COURTS-1) showCourtDone(); else startRunHome(); },900);
   } else {
