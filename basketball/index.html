@@ -365,7 +365,7 @@ function shoot(dx, dy) {
   ball.ty = RCY() + RW()*0.45;
   ball.t=0; ball.dur=35; ball.active=true;
 
-  const miss=Math.abs(ball.tx-RCX()), rw=RW();
+  const miss=Math.abs(ball.tx-RCX());
   let scored;
   if (miss < rw*0.65) scored=true;
   else if (miss < rw) scored=Math.random()<0.5;
