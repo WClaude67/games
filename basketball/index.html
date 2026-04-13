@@ -257,6 +257,17 @@ function drawHoop() {
     const f=j/4, ny=rimY+(nb-rimY)*f;
     X.beginPath(); X.ellipse(cx,ny,rw*0.42*(1-f*0.55),rw*0.1*(1-f*0.4),0,0,Math.PI*2); X.stroke();
   }
+
+  // DEBUG: show scoring zones (remove later)
+  // Green = guaranteed make, yellow = 50/50
+  X.save();
+  X.globalAlpha=0.25;
+  X.fillStyle='#00ff00';
+  X.fillRect(cx-rw*0.5, rimY-10, rw*1.0, 20);
+  X.fillStyle='#ffff00';
+  X.fillRect(cx-rw*0.8, rimY-10, rw*0.3, 20);
+  X.fillRect(cx+rw*0.5, rimY-10, rw*0.3, 20);
+  X.restore();
 }
 
 function drawHands() {
@@ -374,10 +385,10 @@ function shoot(dx, dy) {
 
   const miss=Math.abs(ball.tx-RCX());
   let scored;
-  if (miss < rw*0.3) scored=true;
-  else if (miss < rw*0.55) scored=Math.random()<0.45;
+  if (miss < rw*0.5) scored=true;
+  else if (miss < rw*0.8) scored=Math.random()<0.5;
   else scored=false;
-  if (dy > -20) scored=false;
+  if (dy > -15) scored=false;
   ball.scored=scored;
   state='flight';
 }
