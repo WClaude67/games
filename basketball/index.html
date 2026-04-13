@@ -270,18 +270,15 @@ function drawHoop() {
   X.restore();
 }
 
-function drawHands() {
+function drawRestingBall() {
   if (state!=='shooting'||ball.active) return;
-  const hy=H*0.85, sp=48;
-  const bg=X.createRadialGradient(W/2-4,hy-4,4,W/2,hy,42);
+  const by=H*0.85, r=42;
+  const bg=X.createRadialGradient(W/2-r*0.3,by-r*0.3,r*0.1,W/2,by,r);
   bg.addColorStop(0,'#f8a000'); bg.addColorStop(0.6,'#e85d04'); bg.addColorStop(1,'#b84400');
-  X.fillStyle=bg; X.beginPath(); X.arc(W/2,hy,42,0,Math.PI*2); X.fill();
+  X.fillStyle=bg; X.beginPath(); X.arc(W/2,by,r,0,Math.PI*2); X.fill();
   X.strokeStyle='rgba(0,0,0,0.15)'; X.lineWidth=2;
-  X.beginPath(); X.moveTo(W/2-42,hy); X.lineTo(W/2+42,hy); X.stroke();
-  X.beginPath(); X.moveTo(W/2,hy-42); X.lineTo(W/2,hy+42); X.stroke();
-  X.fillStyle='#c4813a';
-  X.beginPath(); X.ellipse(W/2-sp,hy+5,18,13,-0.2,0,Math.PI*2); X.fill();
-  X.beginPath(); X.ellipse(W/2+sp,hy+5,18,13,0.2,0,Math.PI*2); X.fill();
+  X.beginPath(); X.moveTo(W/2-r,by); X.lineTo(W/2+r,by); X.stroke();
+  X.beginPath(); X.moveTo(W/2,by-r); X.lineTo(W/2,by+r); X.stroke();
 }
 
 function drawBall() {
@@ -380,11 +377,8 @@ function shoot(dx, dy) {
 
   ball.x=W/2; ball.y=H*0.85;
   const offsetX = dx*0.3;
-  // Snap toward center when close (so makes visually go through hoop)
-  const rawTX = RCX() + offsetX;
-  const distFromCenter = Math.abs(rawTX - RCX());
   const rw = RW();
-  ball.tx = distFromCenter < rw*0.65 ? RCX() + offsetX*0.3 : rawTX;
+  ball.tx = RCX() + offsetX;
   ball.ty = RCY() + RW()*0.45;
   ball.t=0; ball.dur=35; ball.active=true;
 
@@ -481,7 +475,7 @@ function draw() {
   if(state==='runHome') drawRunHome();
   drawBall();
   drawFlingGuide();
-  drawHands();
+  drawRestingBall();
   drawParticles();
   if(state==='transition'){X.fillStyle=`rgba(0,0,0,${Math.max(0,trans.alpha)})`;X.fillRect(0,0,W,H);}
 }
