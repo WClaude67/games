@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Hoops Run</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a2e; }
+  body { display: flex; justify-content: center; align-items: center; font-family: 'Segoe UI', Arial, sans-serif; }
+  canvas { display: block; touch-action: none; cursor: default; user-select: none; -webkit-user-select: none; }
+  #overlay {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; z-index: 10;
+  }
+  #hud {
+    position: absolute; top: 0; left: 0; width: 100%; padding: 12px 20px;
+    display: flex; justify-content: space-between; align-items: center;
+    pointer-events: none; z-index: 5;
+  }
+  .hud-box {
+    background: rgba(0,0,0,0.6); color: #fff; padding: 8px 16px;
+    border-radius: 12px; font-size: 16px; font-weight: 600;
+    backdrop-filter: blur(6px); border: 1px solid rgba(255,255,255,0.1);
+  }
+  .hud-box .label { color: #f8a000; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+  #popup {
+    display: none; pointer-events: auto; text-align: center;
+    background: rgba(20,20,40,0.95); padding: 36px 54px; border-radius: 24px;
+    border: 3px solid #f8a000; box-shadow: 0 0 60px rgba(248,160,0,0.3);
+    backdrop-filter: blur(10px);
+  }
+  .pop-title { font-size: 42px; font-weight: 800; color: #f8a000; margin-bottom: 8px; }
+  .pop-sub { font-size: 18px; color: #ccc; margin-bottom: 4px; }
+  .pop-stats { font-size: 15px; color: #999; margin: 12px 0; }
+  .pop-btn {
+    pointer-events: auto; font-family: inherit; font-size: 18px; font-weight: 700;
+    padding: 14px 42px; border: none; background: linear-gradient(135deg, #f8a000, #e85d04);
+    color: #fff; border-radius: 50px; cursor: pointer; transition: all 0.15s;
+    margin-top: 14px; text-transform: uppercase; letter-spacing: 1px;
+  }
+  .pop-btn:hover { transform: scale(1.05); box-shadow: 0 4px 20px rgba(248,160,0,0.4); }
+  #voice-callout {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    font-size: 38px; font-weight: 900; color: #fff; pointer-events: none;
+    text-shadow: 0 0 20px rgba(248,160,0,0.8), 2px 2px 0 #000;
+    opacity: 0; transition: opacity 0.2s; z-index: 15;
+  }
+  #aim-hint {
+    position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+    color: rgba(255,255,255,0.5); font-size: 14px; pointer-events: none; z-index: 5;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <div class="hud-box"><span class="label">Court</span><br><span id="hud-court">1 / 4</span></div>
+  <div class="hud-box"><span class="label">Shots</span><br><span id="hud-shots">0 / 30</span></div>
+  <div class="hud-box"><span class="label">Made</span><br><span id="hud-made">0</span></div>
+</div>
+<div id="overlay"><div id="popup"></div></div>
+<div id="voice-callout"></div>
+<div id="aim-hint"></div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const popup = document.getElementById('popup');
+const callout = document.getElementById('voice-callout');
+const aimHint = document.getElementById('aim-hint');
+
+// --- Config ---
+const COURTS = 4;
+const SHOTS_PER_COURT = 30;
+const courtNames = ['Neighborhood Court', 'Park Court', 'School Gym', 'Downtown Court'];
+const courtColors = [
+  { sky: '#1a1a3e', ground: '#2d5016', court: '#c4873a', line: '#fff' },
+  { sky: '#0f2027', ground: '#1b4332', court: '#b8763a', line: '#eee' },
+  { sky: '#1a1a2e', ground: '#5c4033', court: '#d4a25a', line: '#fff' },
+  { sky: '#16213e', ground: '#2d3436', court: '#c0702a', line: '#ffe' },
+];
+
+// --- State ---
+let W, H, scale;
+let state = 'title'; // title, running, shooting, shot-fly, celebrating, run-home, done
+let currentCourt = 0;
+let shotsTaken = 0;
+let shotsMade = 0;
+let totalMade = 0;
+let totalShots = 0;
+
+// Player
+let player = { x: 0, y: 0, frame: 0, dir: 1 };
+let runTarget = 0;
+let runSpeed = 0;
+
+// Hoop
+let hoop = { x: 0, y: 0, rimY: 0, backboardTop: 0 };
+
+// Ball
+let ball = { x: 0, y: 0, vx: 0, vy: 0, active: false, radius: 0 };
+let ballTrail = [];
+
+// Aim
+let aimAngle = 0;
+let aimPower = 0;
+let aimDir = 1;
+let powerDir = 1;
+let aiming = false;
+let aimLocked = false;
+let powerLocked = false;
+
+// Particles
+let particles = [];
+let stars = [];
+
+// Voice
+const phrases_good = ['Good job!', 'Good man!', 'Nice shot!', 'Swish!', 'Nothing but net!', 'Money!', 'Buckets!'];
+const phrases_miss = ['Good effort!', 'Almost!', 'So close!', 'Keep shooting!', 'Next one!', 'Shake it off!'];
+
+function speak(text) {
+  if ('speechSynthesis' in window) {
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.1;
+    u.pitch = 1.0;
+    speechSynthesis.speak(u);
+  }
+  showCallout(text);
+}
+
+function showCallout(text) {
+  callout.textContent = text;
+  callout.style.opacity = '1';
+  callout.style.transform = 'translate(-50%, -50%) scale(1.1)';
+  setTimeout(() => {
+    callout.style.opacity = '0';
+    callout.style.transform = 'translate(-50%, -50%) scale(0.9)';
+  }, 1200);
+}
+
+// --- Resize ---
+function resize() {
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W;
+  canvas.height = H;
+  scale = Math.min(W / 800, H / 600);
+
+  // Generate background stars
+  if (stars.length === 0) {
+    for (let i = 0; i < 80; i++) {
+      stars.push({ x: Math.random() * 1600, y: Math.random() * H * 0.55, r: Math.random() * 1.5 + 0.5, twinkle: Math.random() * Math.PI * 2 });
+    }
+  }
+}
+window.addEventListener('resize', resize);
+resize();
+
+// --- Drawing helpers ---
+function groundY() { return H * 0.72; }
+function courtLeft() { return W * 0.1; }
+function courtRight() { return W * 0.9; }
+
+function drawSky(colors) {
+  const grd = ctx.createLinearGradient(0, 0, 0, groundY());
+  grd.addColorStop(0, colors.sky);
+  grd.addColorStop(1, shiftColor(colors.sky, 30));
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, 0, W, groundY());
+
+  // Stars
+  const t = performance.now() / 1000;
+  ctx.fillStyle = '#fff';
+  for (const s of stars) {
+    const a = 0.4 + 0.6 * Math.sin(t * 1.5 + s.twinkle);
+    ctx.globalAlpha = a;
+    const sx = ((s.x - cameraX * 0.2) % (W + 100) + W + 100) % (W + 100);
+    ctx.beginPath();
+    ctx.arc(sx, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawGround(colors) {
+  const gy = groundY();
+  // Ground
+  const grd = ctx.createLinearGradient(0, gy, 0, H);
+  grd.addColorStop(0, colors.ground);
+  grd.addColorStop(1, shiftColor(colors.ground, -20));
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, gy, W, H - gy);
+
+  // Court surface
+  const cl = courtLeft() - cameraX;
+  const cr = courtRight() - cameraX;
+  const cw = cr - cl;
+  ctx.fillStyle = colors.court;
+  ctx.fillRect(cl, gy, cw, H - gy);
+
+  // Court lines
+  ctx.strokeStyle = colors.line;
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.4;
+  ctx.strokeRect(cl + 10, gy + 5, cw - 20, H - gy - 10);
+  // Center line
+  ctx.beginPath();
+  ctx.moveTo(cl + cw / 2, gy + 5);
+  ctx.lineTo(cl + cw / 2, H - 5);
+  ctx.stroke();
+  // Center circle
+  ctx.beginPath();
+  ctx.arc(cl + cw / 2, gy + (H - gy) / 2, 40 * scale, 0, Math.PI * 2);
+  ctx.stroke();
+  // Free throw areas
+  ctx.strokeRect(cl + 10, gy + (H - gy) / 2 - 30 * scale, 80 * scale, 60 * scale);
+  ctx.strokeRect(cr - 10 - 80 * scale, gy + (H - gy) / 2 - 30 * scale, 80 * scale, 60 * scale);
+  ctx.globalAlpha = 1;
+}
+
+function drawHoop() {
+  const hx = hoop.x - cameraX;
+  const hy = groundY();
+  const rimH = 140 * scale;
+  const rimY = hy - rimH;
+  hoop.rimY = rimY;
+  hoop.backboardTop = rimY - 50 * scale;
+
+  // Pole
+  ctx.fillStyle = '#888';
+  ctx.fillRect(hx - 3, rimY + 10 * scale, 6, rimH - 10 * scale);
+
+  // Backboard
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillRect(hx - 30 * scale, rimY - 40 * scale, 5, 80 * scale);
+  // Backboard square
+  ctx.strokeStyle = '#e44';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(hx - 29 * scale, rimY - 15 * scale, 4, 30 * scale);
+
+  // Rim
+  ctx.strokeStyle = '#e85d04';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(hx - 25 * scale, rimY);
+  ctx.lineTo(hx - 25 * scale - 28 * scale, rimY);
+  ctx.stroke();
+
+  // Net (simple lines)
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  ctx.lineWidth = 1;
+  const netLeft = hx - 25 * scale - 28 * scale;
+  const netRight = hx - 25 * scale;
+  const netBottom = rimY + 35 * scale;
+  const t = performance.now() / 600;
+  for (let i = 0; i <= 6; i++) {
+    const frac = i / 6;
+    const nx = netLeft + frac * (netRight - netLeft);
+    const sway = Math.sin(t + i) * 2;
+    ctx.beginPath();
+    ctx.moveTo(nx, rimY);
+    ctx.quadraticCurveTo(nx + sway, rimY + 18 * scale, (netLeft + netRight) / 2 + sway, netBottom);
+    ctx.stroke();
+  }
+
+  // Rim highlight
+  ctx.fillStyle = '#f8a000';
+  ctx.beginPath();
+  ctx.arc(hx - 25 * scale, rimY, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(hx - 25 * scale - 28 * scale, rimY, 4, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawPlayer() {
+  const px = player.x - cameraX;
+  const py = groundY();
+  const ps = scale * 1.0;
+  const t = performance.now() / 150;
+  const bobbing = (state === 'running' || state === 'run-home') ? Math.sin(t) * 4 : 0;
+  const legSwing = (state === 'running' || state === 'run-home') ? Math.sin(t) * 0.4 : 0;
+
+  ctx.save();
+  ctx.translate(px, py + bobbing);
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 18 * ps, 6 * ps, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Legs
+  ctx.strokeStyle = '#222';
+  ctx.lineWidth = 5 * ps;
+  ctx.lineCap = 'round';
+  // Left leg
+  ctx.beginPath();
+  ctx.moveTo(-6 * ps, -20 * ps);
+  ctx.lineTo(-8 * ps + Math.sin(legSwing) * 10 * ps, 0);
+  ctx.stroke();
+  // Right leg
+  ctx.beginPath();
+  ctx.moveTo(6 * ps, -20 * ps);
+  ctx.lineTo(8 * ps - Math.sin(legSwing) * 10 * ps, 0);
+  ctx.stroke();
+
+  // Body (jersey)
+  ctx.fillStyle = '#e85d04';
+  ctx.beginPath();
+  ctx.ellipse(0, -40 * ps, 14 * ps, 22 * ps, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Jersey number
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${12 * ps}px Arial`;
+  ctx.textAlign = 'center';
+  ctx.fillText('23', 0, -35 * ps);
+
+  // Arms
+  ctx.strokeStyle = '#c4813a';
+  ctx.lineWidth = 4 * ps;
+  const armAngle = (state === 'shooting' && !ball.active) ? -aimAngle : 0.3;
+  // Left arm
+  ctx.beginPath();
+  ctx.moveTo(-12 * ps, -45 * ps);
+  ctx.lineTo(-22 * ps, -30 * ps + Math.sin(legSwing) * 5 * ps);
+  ctx.stroke();
+  // Right arm (shooting arm)
+  ctx.beginPath();
+  ctx.moveTo(12 * ps, -45 * ps);
+  if (state === 'shooting' && !ball.active && !powerLocked) {
+    ctx.lineTo(12 * ps + Math.cos(-aimAngle) * 25 * ps, -45 * ps + Math.sin(-aimAngle) * 25 * ps);
+  } else {
+    ctx.lineTo(22 * ps, -30 * ps - Math.sin(legSwing) * 5 * ps);
+  }
+  ctx.stroke();
+
+  // Head
+  ctx.fillStyle = '#c4813a';
+  ctx.beginPath();
+  ctx.arc(0, -62 * ps, 12 * ps, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Hair
+  ctx.fillStyle = '#222';
+  ctx.beginPath();
+  ctx.arc(0, -66 * ps, 12 * ps, Math.PI, Math.PI * 2);
+  ctx.fill();
+
+  // Eyes
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(-4 * ps * player.dir, -63 * ps, 3 * ps, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#111';
+  ctx.beginPath();
+  ctx.arc(-3 * ps * player.dir, -63 * ps, 1.5 * ps, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawBall() {
+  if (!ball.active) return;
+  const bx = ball.x - cameraX;
+  const by = ball.y;
+
+  // Trail
+  ctx.strokeStyle = 'rgba(248,160,0,0.2)';
+  ctx.lineWidth = ball.radius * 1.5;
+  ctx.lineCap = 'round';
+  if (ballTrail.length > 1) {
+    ctx.beginPath();
+    ctx.moveTo(ballTrail[0].x - cameraX, ballTrail[0].y);
+    for (let i = 1; i < ballTrail.length; i++) {
+      ctx.lineTo(ballTrail[i].x - cameraX, ballTrail[i].y);
+    }
+    ctx.stroke();
+  }
+
+  // Shadow on ground
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.beginPath();
+  ctx.ellipse(bx, groundY(), ball.radius, ball.radius * 0.3, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Ball
+  const r = ball.radius;
+  const grd = ctx.createRadialGradient(bx - r * 0.3, by - r * 0.3, r * 0.1, bx, by, r);
+  grd.addColorStop(0, '#f8a000');
+  grd.addColorStop(0.7, '#e85d04');
+  grd.addColorStop(1, '#b84400');
+  ctx.fillStyle = grd;
+  ctx.beginPath();
+  ctx.arc(bx, by, r, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Ball lines
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(bx - r, by);
+  ctx.lineTo(bx + r, by);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(bx, by - r);
+  ctx.lineTo(bx, by + r);
+  ctx.stroke();
+}
+
+function drawAimGuide() {
+  if (state !== 'shooting' || ball.active) return;
+  const px = player.x - cameraX;
+  const py = groundY() - 60 * scale;
+
+  // Angle indicator
+  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath();
+  ctx.moveTo(px, py);
+  const len = 60 + aimPower * 40;
+  ctx.lineTo(px + Math.cos(-aimAngle) * len, py + Math.sin(-aimAngle) * len);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Power bar
+  const barW = 120 * scale;
+  const barH = 10;
+  const barX = px - barW / 2;
+  const barY = py - 40 * scale;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+
+  const pFrac = aimPower;
+  const pColor = pFrac < 0.4 ? '#4caf50' : pFrac < 0.7 ? '#f8a000' : '#e44';
+  ctx.fillStyle = pColor;
+  ctx.fillRect(barX, barY, barW * pFrac, barH);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(barX, barY, barW, barH);
+
+  // Labels
+  ctx.fillStyle = '#fff';
+  ctx.font = `${11 * scale}px Arial`;
+  ctx.textAlign = 'center';
+  if (!aimLocked) {
+    ctx.fillText('TAP to set angle', px, barY - 10);
+  } else if (!powerLocked) {
+    ctx.fillText('TAP to set power', px, barY - 10);
+  }
+}
+
+function drawParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.15;
+    p.life -= 0.02;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x - cameraX, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function spawnParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x, y, vx: (Math.random() - 0.5) * 8, vy: (Math.random() - 0.8) * 6,
+      size: Math.random() * 4 + 2, color, life: 1
+    });
+  }
+}
+
+// Home drawing
+function drawHome() {
+  const hx = homeX - cameraX;
+  const hy = groundY();
+  const hs = scale;
+
+  // House body
+  ctx.fillStyle = '#5a3a28';
+  ctx.fillRect(hx - 40 * hs, hy - 60 * hs, 80 * hs, 60 * hs);
+
+  // Roof
+  ctx.fillStyle = '#8b2500';
+  ctx.beginPath();
+  ctx.moveTo(hx - 50 * hs, hy - 60 * hs);
+  ctx.lineTo(hx, hy - 100 * hs);
+  ctx.lineTo(hx + 50 * hs, hy - 60 * hs);
+  ctx.closePath();
+  ctx.fill();
+
+  // Door
+  ctx.fillStyle = '#3a2010';
+  ctx.fillRect(hx - 10 * hs, hy - 40 * hs, 20 * hs, 40 * hs);
+  ctx.fillStyle = '#f8a000';
+  ctx.beginPath();
+  ctx.arc(hx + 6 * hs, hy - 20 * hs, 2 * hs, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Windows
+  ctx.fillStyle = '#ffd54f';
+  ctx.fillRect(hx - 32 * hs, hy - 50 * hs, 16 * hs, 16 * hs);
+  ctx.fillRect(hx + 16 * hs, hy - 50 * hs, 16 * hs, 16 * hs);
+
+  // Window cross
+  ctx.strokeStyle = '#5a3a28';
+  ctx.lineWidth = 2;
+  for (const wx of [hx - 24 * hs, hx + 24 * hs]) {
+    ctx.beginPath(); ctx.moveTo(wx, hy - 50 * hs); ctx.lineTo(wx, hy - 34 * hs); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(wx - 8 * hs, hy - 42 * hs); ctx.lineTo(wx + 8 * hs, hy - 42 * hs); ctx.stroke();
+  }
+
+  // HOME label
+  ctx.fillStyle = '#f8a000';
+  ctx.font = `bold ${14 * hs}px Arial`;
+  ctx.textAlign = 'center';
+  ctx.fillText('HOME', hx, hy - 105 * hs);
+}
+
+// --- Camera ---
+let cameraX = 0;
+
+// --- Court layout ---
+let courtStartX = [];
+let hoopPositions = [];
+let homeX = 0;
+
+function buildLayout() {
+  courtStartX = [];
+  hoopPositions = [];
+  const spacing = W * 0.8;
+  const courtW = courtRight() - courtLeft();
+  for (let i = 0; i < COURTS; i++) {
+    const start = i * (courtW + spacing) + 100;
+    courtStartX.push(start);
+    hoopPositions.push(start + courtW * 0.75);
+  }
+  homeX = courtStartX[COURTS - 1] + courtW + spacing + 100;
+}
+buildLayout();
+
+function setupCourt(idx) {
+  hoop.x = hoopPositions[idx];
+  player.x = courtStartX[idx] + (courtRight() - courtLeft()) * 0.3;
+  player.dir = 1;
+  shotsTaken = 0;
+  shotsMade = 0;
+  aimAngle = Math.PI / 4;
+  aimPower = 0.5;
+  aimDir = 1;
+  powerDir = 1;
+  aimLocked = false;
+  powerLocked = false;
+  ball.active = false;
+  ballTrail = [];
+  updateHUD();
+}
+
+function updateHUD() {
+  document.getElementById('hud-court').textContent = `${currentCourt + 1} / ${COURTS}`;
+  document.getElementById('hud-shots').textContent = `${shotsTaken} / ${SHOTS_PER_COURT}`;
+  document.getElementById('hud-made').textContent = `${totalMade}`;
+}
+
+// --- Shooting ---
+function shootBall() {
+  const px = player.x;
+  const py = groundY() - 60 * scale;
+  const speed = 8 + aimPower * 10;
+  ball.x = px;
+  ball.y = py;
+  ball.vx = Math.cos(-aimAngle) * speed * player.dir;
+  ball.vy = Math.sin(-aimAngle) * speed;
+  ball.radius = 8 * scale;
+  ball.active = true;
+  ballTrail = [{ x: ball.x, y: ball.y }];
+  state = 'shot-fly';
+}
+
+function checkScore() {
+  const rimLeft = hoop.x - 25 * scale - 28 * scale;
+  const rimRight = hoop.x - 25 * scale;
+  const rimY = hoop.rimY;
+
+  // Check if ball passes through rim
+  if (ball.y >= rimY - 5 && ball.y <= rimY + 15 &&
+      ball.x >= rimLeft + 5 && ball.x <= rimRight - 5 &&
+      ball.vy > 0) {
+    return true;
+  }
+  return false;
+}
+
+function onShotComplete(scored) {
+  shotsTaken++;
+  totalShots++;
+  if (scored) {
+    shotsMade++;
+    totalMade++;
+    const phrase = phrases_good[Math.floor(Math.random() * phrases_good.length)];
+    speak(phrase);
+    spawnParticles(ball.x, ball.y, '#f8a000', 20);
+    spawnParticles(ball.x, ball.y, '#fff', 10);
+  } else {
+    const phrase = phrases_miss[Math.floor(Math.random() * phrases_miss.length)];
+    speak(phrase);
+  }
+
+  ball.active = false;
+  ballTrail = [];
+  updateHUD();
+
+  if (shotsTaken >= SHOTS_PER_COURT) {
+    setTimeout(() => {
+      if (currentCourt < COURTS - 1) {
+        showCourtComplete();
+      } else {
+        startRunHome();
+      }
+    }, 1000);
+  } else {
+    setTimeout(() => {
+      state = 'shooting';
+      aimLocked = false;
+      powerLocked = false;
+      aimAngle = Math.PI / 4;
+      aimPower = 0.5;
+    }, 800);
+  }
+}
+
+function showCourtComplete() {
+  const pct = Math.round((shotsMade / SHOTS_PER_COURT) * 100);
+  popup.innerHTML = `
+    <div class="pop-title">${courtNames[currentCourt]} Complete!</div>
+    <div class="pop-sub">${shotsMade} / ${SHOTS_PER_COURT} shots made (${pct}%)</div>
+    <div class="pop-stats">Total: ${totalMade} / ${totalShots}</div>
+    <button class="pop-btn" id="btn-next">Run to Next Court →</button>
+  `;
+  popup.style.display = 'block';
+  document.getElementById('btn-next').onclick = () => {
+    popup.style.display = 'none';
+    currentCourt++;
+    startRunning();
+  };
+}
+
+function startRunning() {
+  state = 'running';
+  runTarget = courtStartX[currentCourt] + (courtRight() - courtLeft()) * 0.3;
+  runSpeed = 5;
+  player.dir = 1;
+  aimHint.textContent = '';
+}
+
+function startRunHome() {
+  state = 'run-home';
+  runTarget = homeX;
+  runSpeed = 5;
+  player.dir = 1;
+  speak("Let's go home!");
+  aimHint.textContent = '';
+}
+
+function showFinalScreen() {
+  const pct = Math.round((totalMade / totalShots) * 100);
+  let grade = pct >= 80 ? 'S' : pct >= 60 ? 'A' : pct >= 40 ? 'B' : 'C';
+  let gradeColor = pct >= 80 ? '#f8a000' : pct >= 60 ? '#4caf50' : pct >= 40 ? '#2196f3' : '#999';
+  popup.innerHTML = `
+    <div class="pop-title">You Made It Home!</div>
+    <div class="pop-sub" style="font-size:60px;color:${gradeColor};font-weight:900;margin:8px 0">${grade}</div>
+    <div class="pop-sub">${totalMade} / ${totalShots} total shots made (${pct}%)</div>
+    <div class="pop-stats">${COURTS} courts completed</div>
+    <button class="pop-btn" id="btn-replay">Play Again</button>
+  `;
+  popup.style.display = 'block';
+  speak(`You made it home! ${totalMade} out of ${totalShots} shots. ${pct} percent!`);
+  document.getElementById('btn-replay').onclick = () => {
+    popup.style.display = 'none';
+    resetGame();
+  };
+}
+
+function showTitle() {
+  state = 'title';
+  popup.innerHTML = `
+    <div class="pop-title">🏀 Hoops Run</div>
+    <div class="pop-sub">Shoot 30 shots at each court, then run to the next one!</div>
+    <div class="pop-stats">4 courts • get home to win</div>
+    <button class="pop-btn" id="btn-start">Let's Go!</button>
+  `;
+  popup.style.display = 'block';
+  document.getElementById('btn-start').onclick = () => {
+    popup.style.display = 'none';
+    setupCourt(0);
+    state = 'shooting';
+    aimHint.textContent = 'Tap once to set angle, tap again to set power & shoot!';
+  };
+}
+
+function resetGame() {
+  currentCourt = 0;
+  totalMade = 0;
+  totalShots = 0;
+  buildLayout();
+  setupCourt(0);
+  cameraX = 0;
+  state = 'shooting';
+  aimHint.textContent = 'Tap once to set angle, tap again to set power & shoot!';
+}
+
+// --- Input ---
+function onTap() {
+  if (state !== 'shooting' || ball.active) return;
+
+  if (!aimLocked) {
+    aimLocked = true;
+  } else if (!powerLocked) {
+    powerLocked = true;
+    shootBall();
+  }
+}
+
+canvas.addEventListener('click', onTap);
+canvas.addEventListener('touchstart', (e) => { e.preventDefault(); onTap(); });
+
+// --- Color helpers ---
+function shiftColor(hex, amount) {
+  let r = parseInt(hex.slice(1, 3), 16) + amount;
+  let g = parseInt(hex.slice(3, 5), 16) + amount;
+  let b = parseInt(hex.slice(5, 7), 16) + amount;
+  r = Math.max(0, Math.min(255, r));
+  g = Math.max(0, Math.min(255, g));
+  b = Math.max(0, Math.min(255, b));
+  return `rgb(${r},${g},${b})`;
+}
+
+// --- Main Loop ---
+let lastTime = 0;
+
+function update(dt) {
+  // Camera follows player
+  const targetCam = player.x - W * 0.35;
+  cameraX += (targetCam - cameraX) * 0.08;
+  if (cameraX < 0) cameraX = 0;
+
+  if (state === 'shooting' && !ball.active) {
+    // Auto-oscillate aim angle
+    if (!aimLocked) {
+      aimAngle += aimDir * 0.02;
+      if (aimAngle > Math.PI * 0.75) aimDir = -1;
+      if (aimAngle < Math.PI * 0.15) aimDir = 1;
+    }
+    // Auto-oscillate power
+    if (aimLocked && !powerLocked) {
+      aimPower += powerDir * 0.015;
+      if (aimPower > 1) { aimPower = 1; powerDir = -1; }
+      if (aimPower < 0) { aimPower = 0; powerDir = 1; }
+    }
+  }
+
+  if (state === 'shot-fly') {
+    ball.x += ball.vx;
+    ball.y += ball.vy;
+    ball.vy += 0.35; // gravity
+    ballTrail.push({ x: ball.x, y: ball.y });
+    if (ballTrail.length > 20) ballTrail.shift();
+
+    if (checkScore()) {
+      onShotComplete(true);
+      return;
+    }
+
+    // Hit ground or off screen
+    if (ball.y > groundY()) {
+      onShotComplete(false);
+      return;
+    }
+    // Way off screen
+    if (ball.x < cameraX - 100 || ball.x > cameraX + W + 200 || ball.y < -200) {
+      onShotComplete(false);
+      return;
+    }
+
+    // Backboard collision
+    const bbX = hoop.x - cameraX;
+    if (ball.x >= hoop.x - 27 * scale && ball.x <= hoop.x - 23 * scale &&
+        ball.y >= hoop.rimY - 40 * scale && ball.y <= hoop.rimY + 40 * scale) {
+      ball.vx *= -0.5;
+      ball.x = hoop.x - 28 * scale;
+    }
+  }
+
+  if (state === 'running' || state === 'run-home') {
+    const dx = runTarget - player.x;
+    if (Math.abs(dx) > 5) {
+      player.x += Math.sign(dx) * runSpeed;
+      player.dir = Math.sign(dx);
+    } else {
+      player.x = runTarget;
+      if (state === 'running') {
+        setupCourt(currentCourt);
+        state = 'shooting';
+        aimHint.textContent = 'Tap once to set angle, tap again to set power & shoot!';
+      } else {
+        state = 'done';
+        showFinalScreen();
+      }
+    }
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  const colors = courtColors[currentCourt] || courtColors[0];
+
+  drawSky(colors);
+
+  // Draw all courts
+  for (let i = 0; i < COURTS; i++) {
+    const cl = courtStartX[i] - cameraX;
+    const cr = cl + (courtRight() - courtLeft());
+    // Only draw if on screen
+    if (cr > -100 && cl < W + 100) {
+      const c = courtColors[i];
+      const gy = groundY();
+      const cw = cr - cl;
+      // Court surface
+      ctx.fillStyle = c.court;
+      ctx.fillRect(cl, gy, cw, H - gy);
+      // Court lines
+      ctx.strokeStyle = c.line;
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.35;
+      ctx.strokeRect(cl + 10, gy + 5, cw - 20, H - gy - 10);
+      ctx.beginPath(); ctx.moveTo(cl + cw / 2, gy + 5); ctx.lineTo(cl + cw / 2, H - 5); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cl + cw / 2, gy + (H - gy) / 2, 40 * scale, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      // Court label
+      ctx.fillStyle = 'rgba(255,255,255,0.15)';
+      ctx.font = `bold ${20 * scale}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.fillText(courtNames[i], cl + cw / 2, gy + 30);
+    }
+  }
+
+  // Ground (between courts)
+  const firstCourtLeft = courtStartX[0] - cameraX;
+  if (firstCourtLeft > 0) {
+    ctx.fillStyle = colors.ground;
+    ctx.fillRect(0, groundY(), firstCourtLeft, H - groundY());
+  }
+  for (let i = 0; i < COURTS; i++) {
+    const cr = courtStartX[i] + (courtRight() - courtLeft()) - cameraX;
+    const nextCl = i < COURTS - 1 ? courtStartX[i + 1] - cameraX : homeX + 200 - cameraX;
+    ctx.fillStyle = courtColors[Math.min(i + 1, COURTS - 1)].ground;
+    ctx.fillRect(cr, groundY(), nextCl - cr, H - groundY());
+  }
+
+  // Draw all hoops
+  for (let i = 0; i < COURTS; i++) {
+    const ox = hoop.x;
+    hoop.x = hoopPositions[i];
+    if (hoop.x - cameraX > -200 && hoop.x - cameraX < W + 200) {
+      drawHoop();
+    }
+    hoop.x = ox;
+  }
+  // Restore current hoop for collision
+  hoop.x = hoopPositions[currentCourt];
+  const gy = groundY();
+  const rimH = 140 * scale;
+  hoop.rimY = gy - rimH;
+
+  drawHome();
+  drawBall();
+  drawAimGuide();
+  drawPlayer();
+  drawParticles();
+}
+
+function loop(time) {
+  const dt = Math.min(time - lastTime, 33);
+  lastTime = time;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// --- Start ---
+showTitle();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
