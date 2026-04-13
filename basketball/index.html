@@ -136,12 +136,12 @@ function say(text) {
 }
 
 // ======== LAYOUT ========
-function HZ() { return H*0.33; }
-function CT() { return H*0.38; }
+function HZ() { return H*0.30; }
+function CT() { return H*0.35; }
 function CB() { return H*0.95; }
 function RCX() { return W/2; }
-function RCY() { return H*0.24; }
-function RW() { return Math.max(W*0.08, 50); }
+function RCY() { return H*0.18; }
+function RW() { return Math.max(W*0.14, 80); }
 
 // ======== DRAWING ========
 function drawSky() {
@@ -351,17 +351,21 @@ function shoot(dx, dy) {
   if (len<20) return;
 
   ball.x=W/2; ball.y=H*0.85;
-  const offsetX = -dx*0.4;
-  ball.tx = RCX() + offsetX;
+  const offsetX = -dx*0.3;
+  // Snap toward center when close (so makes visually go through hoop)
+  const rawTX = RCX() + offsetX;
+  const distFromCenter = Math.abs(rawTX - RCX());
+  const rw = RW();
+  ball.tx = distFromCenter < rw*0.65 ? RCX() + offsetX*0.3 : rawTX;
   ball.ty = RCY() + RW()*0.45;
   ball.t=0; ball.dur=35; ball.active=true;
 
   const miss=Math.abs(ball.tx-RCX()), rw=RW();
   let scored;
-  if (miss < rw*0.5) scored=true;
-  else if (miss < rw*0.9) scored=Math.random()<0.4;
+  if (miss < rw*0.65) scored=true;
+  else if (miss < rw) scored=Math.random()<0.5;
   else scored=false;
-  if (dy > -30) scored=false;
+  if (dy > -15) scored=false;
   ball.scored=scored;
   state='flight';
 }
