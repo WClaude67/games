@@ -376,9 +376,9 @@ function shoot(dx, dy) {
   if (len<20) return;
 
   ball.x=W/2; ball.y=H*0.85;
-  const offsetX = dx*0.3;
+  const nx = -dx / len;
   const rw = RW();
-  ball.tx = RCX() + offsetX;
+  ball.tx = RCX() + nx * W * 0.5;
   ball.ty = RCY() + RW()*0.45;
   ball.t=0; ball.dur=35; ball.active=true;
 
