@@ -136,12 +136,12 @@ function say(text) {
 }
 
 // ======== LAYOUT ========
-function HZ() { return H*0.30; }
-function CT() { return H*0.35; }
+function HZ() { return H*0.28; }
+function CT() { return H*0.38; }
 function CB() { return H*0.95; }
 function RCX() { return W/2; }
-function RCY() { return H*0.18; }
-function RW() { return Math.max(W*0.14, 80); }
+function RCY() { return H*0.28; }
+function RW() { return Math.max(W*0.12, 70); }
 
 // ======== DRAWING ========
 function drawSky() {
@@ -220,27 +220,32 @@ function drawCourt() {
 function drawHoop() {
   const cx=RCX(), ry=RCY(), rw=RW();
 
-  // Pole
-  X.fillStyle='#777'; X.fillRect(cx-3,ry,6,CT()-ry+10);
+  // Pole — thick, dark, visible
+  X.fillStyle='#555'; X.fillRect(cx-4,ry-10,8,CT()-ry+20);
 
-  // Backboard
-  const bbw=rw*2.1, bbh=rw*1.3, bby=ry-bbh*0.45;
-  X.fillStyle='rgba(210,225,240,0.4)'; X.fillRect(cx-bbw/2,bby,bbw,bbh);
-  X.strokeStyle='#999'; X.lineWidth=2.5; X.strokeRect(cx-bbw/2,bby,bbw,bbh);
-  X.strokeStyle='#d33'; X.lineWidth=2;
-  const sw=rw*0.8, sh=rw*0.55;
-  X.strokeRect(cx-sw/2,ry-sh*0.2,sw,sh);
+  // Backboard — solid white with clear border
+  const bbw=rw*2, bbh=rw*1.2, bby=ry-bbh*0.5;
+  X.fillStyle='rgba(255,255,255,0.85)'; X.fillRect(cx-bbw/2,bby,bbw,bbh);
+  X.strokeStyle='#333'; X.lineWidth=3; X.strokeRect(cx-bbw/2,bby,bbw,bbh);
+  // Inner red square
+  X.strokeStyle='#cc2222'; X.lineWidth=2.5;
+  const sw=rw*0.7, sh=rw*0.5;
+  X.strokeRect(cx-sw/2,ry-sh*0.15,sw,sh);
 
-  // Rim
+  // Rim — bold orange
   const rimY=ry+rw*0.45;
-  X.strokeStyle='#e85d04'; X.lineWidth=3.5;
-  X.beginPath(); X.ellipse(cx,rimY,rw/2,rw*0.13,0,0,Math.PI*2); X.stroke();
-  X.fillStyle='rgba(232,93,4,0.1)'; X.fill();
+  X.strokeStyle='#e85d04'; X.lineWidth=5;
+  X.beginPath(); X.ellipse(cx,rimY,rw/2,rw*0.14,0,0,Math.PI*2); X.stroke();
+  X.fillStyle='rgba(232,93,4,0.15)'; X.fill();
+  // Rim connector bolts
+  X.fillStyle='#e85d04';
+  X.beginPath(); X.arc(cx-rw/2,rimY,4,0,Math.PI*2); X.fill();
+  X.beginPath(); X.arc(cx+rw/2,rimY,4,0,Math.PI*2); X.fill();
 
-  // Net
+  // Net — more visible
   const nb=rimY+rw*0.65;
   const t=performance.now()/700;
-  X.strokeStyle='rgba(255,255,255,0.3)'; X.lineWidth=1;
+  X.strokeStyle='rgba(255,255,255,0.5)'; X.lineWidth=1.2;
   for (let i=0;i<=7;i++) {
     const a=i/7*Math.PI*2;
     const rx=cx+Math.cos(a)*rw*0.42, ry2=rimY+Math.sin(a)*rw*0.1;
